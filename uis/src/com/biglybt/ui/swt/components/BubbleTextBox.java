@@ -34,6 +34,7 @@ import org.eclipse.swt.widgets.*;
 import com.biglybt.core.config.COConfigurationManager;
 import com.biglybt.core.internat.MessageText;
 import com.biglybt.core.util.Constants;
+import com.biglybt.ui.swt.TextWithHistory;
 import com.biglybt.ui.swt.Utils;
 import com.biglybt.ui.swt.mainwindow.Colors;
 import com.biglybt.ui.swt.utils.FontUtils;
@@ -278,6 +279,8 @@ public class BubbleTextBox
 				setupTextWidgetLayoutData();
 				cBubble.redraw();
 			}
+				// indicate that an escape key should clear the content not close the shell
+			textWidget.setData( "BubbleTextBox::hasContent", textIsBlank?null:"1" );
 			refilter();
 		});
 
@@ -631,12 +634,12 @@ public class BubbleTextBox
 	public void validateFilterRegex() {
 		Color old_bg = (Color) textWidget.getData("TVSWTC:filter.bg");
 		if (old_bg == null) {
-			old_bg = textWidget.getBackground();
+			old_bg = Utils.getSkinnedBackground( textWidget );
 			textWidget.setData("TVSWTC:filter.bg", old_bg);
 		}
 		Color old_fg = (Color) textWidget.getData("TVSWTC:filter.fg");
 		if (old_fg == null) {
-			old_fg = textWidget.getForeground();
+			old_fg = Utils.getSkinnedForeground( textWidget );
 			textWidget.setData("TVSWTC:filter.fg", old_fg);
 		}
 		boolean old = regexIsError;
@@ -715,6 +718,47 @@ public class BubbleTextBox
 		}
 	}
 
+	public void 
+	setState(
+		String		s, 
+		boolean	r) 
+	{
+		Utils.execSWTThread(()->{
+			boolean changed = false;
+		
+			if ( allowRegex ){
+				
+				if ( regexEnabled != r ){
+				
+					regexEnabled = r;
+					
+					changed = true;
+				}
+			}
+			
+			if ( !s.equals( getText())){
+				
+					// hack to prevent the history popup annoyingly appearing when
+					// setting the value
+				
+				textWidget.setData( TextWithHistory.HISTORY_POPUP_DISABLE, "" );
+				
+				textWidget.setText(s);
+				
+				textWidget.setData( TextWithHistory.HISTORY_POPUP_DISABLE, null );
+				
+				changed = true;
+			}
+			
+			if ( changed ){
+				cBubble.redraw();
+				setupTextWidgetLayoutData();
+				validateFilterRegex();
+				refilter();
+			}
+		});
+	}
+	
 	public void setText(String s) {
 		if (s.equals(text)) {
 			return;

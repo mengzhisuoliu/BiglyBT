@@ -390,6 +390,29 @@ AEPluginProxyHandler
 		return( proxy_list.contains( address ));
 	}
 
+	public static String
+	lookupPluginProxyURLHostRewrite(
+		String		host )
+	{
+		synchronized( proxy_map ){
+			
+			for ( WeakReference<PluginProxyImpl> ref: proxy_map.values()){
+				
+				PluginProxyImpl pp = ref.get();
+				
+				if ( pp != null ){
+					
+					if ( pp.getHost().equals( host )){
+						
+						return( pp.getURLHostRewrite());
+					}
+				}
+			}
+		}
+		
+		return( null );
+	}
+	
 	public static Boolean
 	testPluginHTTPProxy(
 		URL			url,
@@ -584,6 +607,8 @@ AEPluginProxyHandler
 		int			port,
 		int			network )
 	{
+		waitForPlugins( plugin_init_max_wait );
+		
 		Map<String,Object>		options		= new HashMap<>();
 
 		options.put( "net", network );
@@ -952,7 +977,20 @@ AEPluginProxyHandler
 		public String
 		getHost()
 		{
-			return((String)proxy_details[1]);
+			Object obj = proxy_details[1];
+			
+			if ( obj instanceof String ){
+				
+				return((String)obj);
+				
+			}else if ( obj instanceof URL ){
+				
+				return(((URL)obj).getHost());
+				
+			}else{
+				
+				return( null );
+			}
 		}
 
 		@Override

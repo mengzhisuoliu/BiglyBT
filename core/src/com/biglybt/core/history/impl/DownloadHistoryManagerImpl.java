@@ -27,6 +27,7 @@ import java.io.InputStream;
 import java.lang.ref.WeakReference;
 import java.net.URL;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.biglybt.core.Core;
 import com.biglybt.core.CoreComponent;
@@ -99,6 +100,8 @@ DownloadHistoryManagerImpl
 
 	final Object	lock = new Object();
 
+	private AtomicInteger	mutation_count = new AtomicInteger();
+	
 	private WeakReference<Map<Long,DownloadHistoryImpl>>		history_active	= new WeakReference<>(null);
 	private WeakReference<Map<Long,DownloadHistoryImpl>>		history_dead	= new WeakReference<>(null);
 
@@ -117,6 +120,10 @@ DownloadHistoryManagerImpl
 
 	private final Map<Long,Long>	redownload_cache	= new HashMap<>();
 
+	private volatile ByteArrayHashMap<long[]>	dates_cache;
+	private volatile int						dates_cache_mutation_count;
+	private volatile long						dates_cache_last_access;
+	
 	boolean	enabled;
 
 	public
@@ -582,7 +589,7 @@ DownloadHistoryManagerImpl
 		}
 	}
 
-	private List<DownloadHistory>
+	public List<DownloadHistory>
 	getHistory()
 	{
 		synchronized( lock ){
@@ -700,25 +707,80 @@ DownloadHistoryManagerImpl
 	@Override
 	public long[]
 	getDates(
-		byte[]		hash )
+		byte[]		hash,
+		boolean		with_redownload )
 	{
-		List<DownloadHistory> history = getHistory();
+		dates_cache_last_access		= SystemTime.getMonotonousTime();
+		
+		ByteArrayHashMap<long[]> cache = getDatesCache();
+		
+		long[] entry = cache.get(hash);
 
-		for ( DownloadHistory dh: history ){
-
-			if ( Arrays.equals( hash, dh.getTorrentHash())){
-
-				Long rdl = redownload_cache.remove( dh.getUID());
-
-				long[] result = { dh.getAddTime(), dh.getCompleteTime(), dh.getRemoveTime(), rdl==null?0:rdl };
-
-				return( result );
+		if ( entry != null ){
+			
+			long uid = entry[0];
+			
+			Long rdl;
+			
+			if ( with_redownload ){
+				
+				rdl = redownload_cache.remove( uid) ;
+				
+			}else{
+				
+				rdl = redownload_cache.get( uid );
 			}
+
+			long[] result = { entry[1], entry[2], entry[3], rdl==null?0:rdl };
+
+			return( result );
 		}
 
 		return( null );
 	}
 
+	private ByteArrayHashMap<long[]>
+	getDatesCache()
+	{
+		ByteArrayHashMap<long[]> cache = dates_cache;
+	
+		int mut = mutation_count.get();
+		
+		if ( cache != null && mut == dates_cache_mutation_count ){
+			
+			return( cache );
+		}
+		
+		cache = new ByteArrayHashMap<>();
+		
+		List<DownloadHistory> history = getHistory();
+
+		for ( DownloadHistory dh: history ){
+			
+			long[] entry = { dh.getUID(), dh.getAddTime(), dh.getCompleteTime(), dh.getRemoveTime() };
+
+			byte[] hash = dh.getTorrentHash();
+			
+			if ( hash != null ){
+				
+				cache.put( hash, entry );
+			}
+			
+			hash = dh.getTorrentV2Hash();
+			
+			if ( hash != null ){
+				
+				cache.put( hash, entry );
+			}
+		}
+		
+		dates_cache 				= cache;
+		dates_cache_mutation_count	= mut;
+		dates_cache_last_access		= SystemTime.getMonotonousTime();
+		
+		return( cache );
+	}
+	
 	void
 	setRedownloading(
 		DownloadHistory		dh )
@@ -853,6 +915,8 @@ DownloadHistoryManagerImpl
 		int								action,
 		int								type )
 	{
+		mutation_count.incrementAndGet();
+		
 		if (( type & UPDATE_TYPE_ACTIVE ) != 0 ){
 
 			Map<Long,DownloadHistoryImpl>	active = getActiveHistory();
@@ -898,12 +962,17 @@ DownloadHistoryManagerImpl
 	void
 	checkDiscard()
 	{
+		long	now = SystemTime.getMonotonousTime();
+
+		if ( now - dates_cache_last_access > 60*1000 ){
+			
+			dates_cache	= null;
+		}
+		
 		if ( history_escaped ){
 
 			return;
 		}
-
-		long	now = SystemTime.getMonotonousTime();
 
 		if ( now - active_load_time > 30*1000 && active_dirty == null && history_active.get() != null ){
 
@@ -1150,8 +1219,8 @@ DownloadHistoryManagerImpl
 		private String			name;
 		private String			save_location;
 		private String[]		tags			= NO_TAGS;
-		private long			complete_time	= -1;
-		private long			remove_time		= -1;
+		private long			complete_time	= 0;
+		private long			remove_time		= 0;
 
 		private Map<Long,DownloadHistoryImpl>	history_ref;	// need this for GC purposes
 
@@ -1223,8 +1292,20 @@ DownloadHistoryManagerImpl
 				size = l_size==null?0:l_size;
 
 				add_time 		= (Long)map.get( "a" );
+				
 				complete_time 	= (Long)map.get( "c" );
+				
+				if ( complete_time < 0 ){
+					
+					complete_time = 0;	// switch to using 0 as "none" to keep Droo happy
+				}
+				
 				remove_time 	= (Long)map.get( "r" );
+
+				if ( remove_time < 0 ){
+					
+					remove_time = 0;	// switch to using 0 as "none" to keep Droo happy
+				}
 
 				List<byte[]> l_tags = (List<byte[]>)map.get( "t" );
 				
@@ -1295,21 +1376,24 @@ DownloadHistoryManagerImpl
 			result.put( SearchResult.PR_SIZE, size );
 			result.put( SearchResult.PR_HASH, hash );
 			result.put( SearchResult.PR_PUB_DATE, new Date( add_time ));
-			
-			String magnet = UrlUtils.getMagnetURI( getTorrentHash(), getTorrentV2Hash(), getName(), null );
-			
-			if ( tags != null && tags.length > 0 ){
-			
-				result.put( SearchResult.PR_TAGS, tags );
+						
+			if ( hash != null ){
 				
-				for ( String tag: tags ){
+				String magnet = UrlUtils.getMagnetURI( hash, getTorrentV2Hash(), getName(), null );
+				
+				if ( tags != null && tags.length > 0 ){
+				
+					result.put( SearchResult.PR_TAGS, tags );
 					
-					magnet += "&tag=" + UrlUtils.encode( tag );
+					for ( String tag: tags ){
+						
+						magnet += "&tag=" + UrlUtils.encode( tag );
+					}
 				}
+	
+				result.put( SearchResult.PR_TORRENT_LINK, magnet );
+				//result.put( SearchResult.PR_DOWNLOAD_LINK, magnet );
 			}
-
-			result.put( SearchResult.PR_TORRENT_LINK, magnet );
-			//result.put( SearchResult.PR_DOWNLOAD_LINK, magnet );
 
 			return( result );
 		}
@@ -1324,14 +1408,25 @@ DownloadHistoryManagerImpl
 
 			if ( comp == 0 ){
 
-				complete_time = dms.getLongParameter( DownloadManagerState.PARAM_DOWNLOAD_COMPLETED_TIME );	// nothing recorded either way
+				comp = dms.getLongParameter( DownloadManagerState.PARAM_DOWNLOAD_COMPLETED_TIME );	// nothing recorded either way
 
-			}else{
-
-				complete_time = comp;
+			}
+			
+			if ( comp < 0 ){
+				
+				comp = 0;
 			}
 
-			return( complete_time != old_time );
+			if ( comp != old_time ){
+				
+				complete_time = comp;
+
+				return( true );
+				
+			}else{
+				
+				return( false );
+			}
 		}
 
 		boolean

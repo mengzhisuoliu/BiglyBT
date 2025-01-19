@@ -25,6 +25,7 @@ import java.net.InetSocketAddress;
 import java.net.URL;
 import java.security.KeyPair;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
@@ -61,6 +62,7 @@ import com.biglybt.core.tag.TagManagerFactory;
 import com.biglybt.core.torrent.PlatformTorrentUtils;
 import com.biglybt.core.torrent.TOTorrent;
 import com.biglybt.core.torrent.TOTorrentFactory;
+import com.biglybt.core.torrent.TOTorrentFactory.TorrentDataHolder;
 import com.biglybt.core.util.*;
 import com.biglybt.core.util.DataSourceResolver.DataSourceImporter;
 import com.biglybt.core.vuzefile.VuzeFile;
@@ -68,6 +70,7 @@ import com.biglybt.core.vuzefile.VuzeFileComponent;
 import com.biglybt.core.vuzefile.VuzeFileHandler;
 import com.biglybt.core.vuzefile.VuzeFileProcessor;
 import com.biglybt.net.magneturi.MagnetURIHandler;
+import com.biglybt.pif.PluginAdapter;
 import com.biglybt.pif.PluginException;
 import com.biglybt.pif.PluginInterface;
 import com.biglybt.pif.ddb.DistributedDatabase;
@@ -289,7 +292,7 @@ SubscriptionManagerImpl
 
 	private CopyOnWriteMap<String,SubscriptionImpl>		subscription_map	= new CopyOnWriteMap<>();
 
-	private boolean	config_dirty;
+	private AtomicBoolean	config_dirty = new AtomicBoolean();
 
 	private int		publish_associations_active;
 	private boolean	publish_next_asyc_pending;
@@ -955,6 +958,20 @@ SubscriptionManagerImpl
 					throw( new PluginException( "derp" ));
 				}
 			});
+		
+		default_pi.addListener(
+			new PluginAdapter()
+			{
+				@Override
+				public void 
+				closedownComplete()
+				{
+					if ( config_dirty.get()){
+						
+						saveConfig();
+					}
+				}
+			});
 	}
 
 	protected boolean
@@ -1055,6 +1072,8 @@ SubscriptionManagerImpl
 					try{
 						List<SubscriptionResult>	matches = matchSubscriptionResults( matcher );
 
+						String subs_str = MessageText.getString( "subscriptions.column.name" );
+								
 						for ( final SubscriptionResult result: matches ){
 
 							final Map result_properties = result.toPropertyMap();
@@ -1073,6 +1092,12 @@ SubscriptionManagerImpl
 								hashes.add( hash_str );
 							}
 
+							Subscription subs = result.getSubscription();
+							
+							String desc = (String)result_properties.get( SearchResult.PR_DESCRIPTION );
+							
+							String f_desc = (desc==null?"":(desc+", ")) + subs_str + ": " + subs.getName();
+														
 							SearchResult search_result =
 								new SearchResult()
 								{
@@ -1081,7 +1106,14 @@ SubscriptionManagerImpl
 									getProperty(
 										int		property_name )
 									{
-										return( result_properties.get( property_name ));
+										if ( property_name == SearchResult.PR_DESCRIPTION ){
+											
+											return( f_desc );
+											
+										}else{
+										
+											return( result_properties.get( property_name ));
+										}
 									}
 								};
 
@@ -5250,7 +5282,7 @@ SubscriptionManagerImpl
 									
 									String alt_url = UrlUtils.parseTextForURL( url.substring( 10 ), true );
 
-									if ( key.startsWith( alt_url )){
+									if ( alt_url != null && key.startsWith( alt_url )){
 
 										result_hash = hash;	// force match below
 									}
@@ -5759,7 +5791,7 @@ SubscriptionManagerImpl
 					runSupport()
 					{
 						try{
-							Download download = core.getPluginManager().getDefaultPluginInterface().getDownloadManager().getDownload( assoc.getHash());
+							Download download = core.getPluginManager().getDefaultPluginInterface().getDownloadManager().getDownload( assoc.getHash(), false );
 
 							if ( download != null ){
 
@@ -6855,7 +6887,11 @@ SubscriptionManagerImpl
 
 			log( "Subscription torrent downloaded" );
 
-			TOTorrent torrent = TOTorrentFactory.deserialiseFromBEncodedByteArray( torrent_data );
+			TorrentDataHolder d_bytes = new TOTorrentFactory.TorrentDataHolder( torrent_data );
+			
+			torrent_data = null;
+			
+			TOTorrent torrent = TOTorrentFactory.deserialiseFromBEncodedByteArray( d_bytes );
 
 				// update size is just that of signed content, torrent itself is .vuze file
 				// so take this into account
@@ -7470,9 +7506,11 @@ SubscriptionManagerImpl
 	loadResults(
 		SubscriptionImpl			subs )
 	{		
-		LinkedHashMap	results;
+		LinkedHashMap<String,SubscriptionResultImpl>	results;
 		
 		boolean	check_results = false;
+		
+		long latest_unread_result = 0;
 		
 		synchronized( result_cache ){
 
@@ -7513,6 +7551,15 @@ SubscriptionManagerImpl
 
 							results.put( result.getID(), result );
 
+							if ( !( result.isDeleted() || result.getRead())){
+							
+								long time_found = result.getTimeFound();
+								
+								if ( time_found > latest_unread_result ){
+									
+									latest_unread_result = time_found;
+								}
+							}
 						}catch( Throwable e ){
 
 							log( "Failed to decode result '" + result_map + "'", e );
@@ -7546,6 +7593,8 @@ SubscriptionManagerImpl
 				result_cache.remove( oldest_sub );
 			}
 		}
+		
+		subs.setNewestUnreadResultTime( latest_unread_result );
 		
 		if ( check_results ){
 		
@@ -7754,11 +7803,13 @@ SubscriptionManagerImpl
  	{		
 		List<SubscriptionResultImpl>	saved_results = new ArrayList<>( results.length );
 		
+		long latest_unread_result = 0;
+
 		synchronized( result_cache ){
 
 			result_cache.remove( subs );
 
-			try{
+			try{				
 				List<SubscriptionResultImpl>	deleted_old_results = new ArrayList<>( results.length );
 				
 				int now_days = (int)( SystemTime.getCurrentTime() / (1000*60*60*24 ));
@@ -7780,6 +7831,16 @@ SubscriptionManagerImpl
 					}else{
 						
 						saved_results.add( result );
+						
+						if ( !result.getRead()){
+							
+							long time_found = result.getTimeFound();
+							
+							if ( time_found > latest_unread_result ){
+								
+								latest_unread_result = time_found;
+							}
+						}
 					}
 				}
 
@@ -7828,7 +7889,7 @@ SubscriptionManagerImpl
 			}
 		}
 		
-		subs.invalidateNewestResultTime();
+		subs.setNewestUnreadResultTime( latest_unread_result );
 		
 		if ( new_unread_results != null && !new_unread_results.isEmpty()){
 		
@@ -7847,7 +7908,7 @@ SubscriptionManagerImpl
 	{
 		if ( has_new_results ){
 			
-			checkGloballyMarkedRead( results );
+			checkGloballyMarkedRead( subs, results );
 			
 			String script = subs.getExecuteOnNewResult();
 			
@@ -7924,6 +7985,7 @@ SubscriptionManagerImpl
 	
 	private void
 	checkGloballyMarkedRead(
+		SubscriptionImpl					subs,
 		Collection<SubscriptionResultImpl>	results )
 	{
 		synchronized( this ){
@@ -7931,6 +7993,8 @@ SubscriptionManagerImpl
 			getGMAR( false );
 			
 			if ( last_gmar != null && !gmar_cache.isEmpty()){
+				
+				List<String> mark_rids = new ArrayList<>();
 				
 				for ( SubscriptionResultImpl result: results ){
 					
@@ -7967,10 +8031,22 @@ SubscriptionManagerImpl
 						SubscriptionResult sr = last_gmar.getHistory().getResult( rid );
 						
 						if ( sr != null && !sr.isDeleted()){
-					
-							result.setRead( true );
+							
+							if ( !result.getRead()){
+								
+								mark_rids.add( result.getID());
+							}
 						}
 					}
+				}
+				
+				if ( !mark_rids.isEmpty()){
+					
+					boolean[] temp = new boolean[mark_rids.size()];
+					
+					Arrays.fill( temp, true );
+					
+					subs.getHistory().markResults( mark_rids.toArray(new String[temp.length]), temp);
 				}
 			}
 		}
@@ -8140,15 +8216,8 @@ SubscriptionManagerImpl
 	protected void
 	configDirty()
 	{
-		synchronized( this ){
-
-			if ( config_dirty ){
-
-				return;
-			}
-
-			config_dirty = true;
-
+		if ( config_dirty.compareAndSet( false, true )){
+		
 			new DelayedEvent(
 				"Subscriptions:save", 5000,
 				new AERunnable()
@@ -8159,7 +8228,7 @@ SubscriptionManagerImpl
 					{
 						synchronized( SubscriptionManagerImpl.this ){
 
-							if ( !config_dirty ){
+							if ( !config_dirty.get()){
 
 								return;
 							}
@@ -8178,7 +8247,7 @@ SubscriptionManagerImpl
 
 		synchronized( this ){
 
-			config_dirty = false;
+			config_dirty.set( false );
 
 			if ( subscription_map.isEmpty()){
 

@@ -100,7 +100,7 @@ public class ModePanel extends AbstractWizardPanel<NewTorrentWizard> {
 
     final String[] localTrackerUrl = new String[1];
 
-    // there's a potential oversize issue with the howToLocal string, and attemtping to force wrap has no effect -
+    // there's a potential oversize issue with the howToLocal string, and attempting to force wrap has no effect -
     // therefore, provide more room and remove extraneous labeling
 
     final boolean showLocal = TRTrackerUtils.isTrackerEnabled();
@@ -490,8 +490,9 @@ public class ModePanel extends AbstractWizardPanel<NewTorrentWizard> {
   }
 
   void activateMode(int mode) {
+	  // BYO is the only mode used, directory+single file panels are dead...
     wizard.setCurrentInfo(MessageText.getString(mode==NewTorrentWizard.MODE_SINGLE_FILE? "wizard.maketorrent.singlefile.help" :(mode==NewTorrentWizard.MODE_DIRECTORY? "wizard.maketorrent.directory.help" :"wizard.newtorrent.byo.help")));
-    ((NewTorrentWizard) wizard).create_mode = mode;
+    //((NewTorrentWizard) wizard).create_mode = mode;
   }
 
   void updateTrackerURL() {

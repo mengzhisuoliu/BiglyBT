@@ -33,7 +33,6 @@ import org.eclipse.swt.events.KeyEvent;
 import org.eclipse.swt.events.KeyListener;
 import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.graphics.Font;
-import org.eclipse.swt.graphics.FontData;
 import org.eclipse.swt.layout.FormAttachment;
 import org.eclipse.swt.layout.FormData;
 import org.eclipse.swt.layout.FormLayout;
@@ -58,10 +57,14 @@ import com.biglybt.ui.swt.Utils;
 import com.biglybt.ui.swt.pif.UISWTView;
 import com.biglybt.ui.swt.pif.UISWTViewEvent;
 import com.biglybt.ui.swt.pifimpl.UISWTViewCoreEventListener;
+import com.biglybt.ui.swt.search.SBC_SearchResult;
 import com.biglybt.ui.swt.shells.MessageBoxShell;
+import com.biglybt.ui.swt.subscriptions.SubscriptionManagerUI.SubsLists;
+import com.biglybt.ui.swt.utils.FontUtils;
 import com.biglybt.ui.swt.views.table.TableViewSWT;
+import com.biglybt.ui.swt.views.table.TableViewSWTMenuFillListener;
 import com.biglybt.ui.swt.views.table.impl.TableViewFactory;
-
+import com.biglybt.ui.swt.views.table.utils.TableColumnFilterHelper;
 import com.biglybt.core.metasearch.Engine;
 import com.biglybt.core.subs.Subscription;
 import com.biglybt.core.subs.SubscriptionManagerFactory;
@@ -97,23 +100,21 @@ public class SubscriptionsView
 
 	private UISWTView swtView;
 
-	public SubscriptionsView() {
+	private TableColumnFilterHelper<Subscription>	col_filter_helper;
 
+	public 
+	SubscriptionsView() 
+	{
 	}
 
 
-	/* (non-Javadoc)
-	 * @see com.biglybt.core.subs.SubscriptionManagerListener#associationsChanged(byte[])
-	 */
 	@Override
-	public void associationsChanged(byte[] association_hash) {
-		// TODO Auto-generated method stub
-
+	public void 
+	associationsChanged(
+		byte[] association_hash) 
+	{
 	}
 
-	/* (non-Javadoc)
-	 * @see com.biglybt.core.subs.SubscriptionManagerListener#subscriptionSelected(com.biglybt.core.subs.Subscription)
-	 */
 	@Override
 	public void
 	subscriptionSelected(
@@ -129,9 +130,6 @@ public class SubscriptionsView
 	{
 	}
 
-	/* (non-Javadoc)
-	 * @see com.biglybt.core.subs.SubscriptionManagerListener#subscriptionAdded(com.biglybt.core.subs.Subscription)
-	 */
 	@Override
 	public void subscriptionAdded(Subscription subscription) {
 		if ( subscription.isSubscribed()){
@@ -139,32 +137,32 @@ public class SubscriptionsView
 		}
 	}
 
-	/* (non-Javadoc)
-	 * @see com.biglybt.core.subs.SubscriptionManagerListener#subscriptionRemoved(com.biglybt.core.subs.Subscription)
-	 */
 	@Override
 	public void subscriptionRemoved(Subscription subscription) {
 		view.removeDataSource(subscription);
 
 	}
 
-	/* (non-Javadoc)
-	 * @see com.biglybt.core.subs.SubscriptionManagerListener#subscriptionChanged(com.biglybt.core.subs.Subscription)
-	 */
 	@Override
 	public void subscriptionChanged(Subscription subscription, int reason) {
 		if ( !subscription.isSubscribed()){
 			subscriptionRemoved(subscription);
-		}else if ( view.getRow(subscription) == null ){
-			subscriptionAdded( subscription );
 		}else{
-			view.refreshTable(true);
+			
+			TableRowCore row = view.getRow(subscription);
+		
+			if ( row == null ){
+			
+				subscriptionAdded( subscription );
+				
+			}else{
+				row.invalidate( true );
+				
+				view.refreshTable(true);
+			}
 		}
 	}
 
-	/* (non-Javadoc)
-	 * @see com.biglybt.pif.ui.UIPluginViewToolBarListener#refreshToolBarItems(java.util.Map)
-	 */
 	@Override
 	public void refreshToolBarItems(Map<String, Long> list) {
 		if ( view == null ){
@@ -175,9 +173,6 @@ public class SubscriptionsView
 		list.put("share", numRows == 1 ? UIToolBarItem.STATE_ENABLED : 0);
 	}
 
-	/* (non-Javadoc)
-	 * @see com.biglybt.pif.ui.toolbar.UIToolBarActivationListener#toolBarItemActivated(ToolBarItem, long, java.lang.Object)
-	 */
 	@Override
 	public boolean toolBarItemActivated(ToolBarItem item, long activationType,
 	                                    Object datasource) {
@@ -258,6 +253,8 @@ public class SubscriptionsView
 		if ( view != null && !view.isDisposed()){
 			view.delete();
 		}
+		col_filter_helper = null;
+		
 		if (viewComposite != null && !viewComposite.isDisposed()) {
 			viewComposite.dispose();
 		}
@@ -289,29 +286,9 @@ public class SubscriptionsView
 
 		Font font = viewComposite.getFont();
 		
-		FontData fDatas[] = font.getFontData();
-		for(int i = 0 ; i < fDatas.length ; i++) {
-			fDatas[i].setStyle(SWT.BOLD);
-		}
-
-		textFont0 = new Font(viewComposite.getDisplay(),fDatas);
-		
-		fDatas = font.getFontData();
-		for(int i = 0 ; i < fDatas.length ; i++) {
-			fDatas[i].setHeight(150 * fDatas[i].getHeight() / 100);
-			if(Constants.isWindows) {
-				fDatas[i].setStyle(SWT.BOLD);
-			}
-		}
-
-		textFont1 = new Font(viewComposite.getDisplay(),fDatas);
-
-		fDatas = font.getFontData();
-		for(int i = 0 ; i < fDatas.length ; i++) {
-			fDatas[i].setHeight(120 * fDatas[i].getHeight() / 100);
-		}
-
-		textFont2 = new Font(viewComposite.getDisplay(),fDatas);
+		textFont0 = FontUtils.getFontWithStyle(font, SWT.BOLD, 1.0f);
+		textFont1 = FontUtils.getFontWithStyle(font, Constants.isWindows ? SWT.BOLD : SWT.NONE, 1.5f);
+		textFont2 = FontUtils.getFontWithStyle(font, SWT.NONE, 1.2f);
 
 		boolean dark = Utils.isDarkAppearanceNative();
 		
@@ -341,6 +318,12 @@ public class SubscriptionsView
 		BubbleTextBox bubbleTextBox = new BubbleTextBox(topComposite, SWT.BORDER | SWT.SEARCH | SWT.ICON_SEARCH | SWT.ICON_CANCEL | SWT.SINGLE);
 		Composite mainBubbleWidget = bubbleTextBox.getMainWidget();
 
+		String tooltip = MessageText.getString("filter.tt.start");
+		tooltip += MessageText.getString("column.filter.tt.line1");
+		tooltip += MessageText.getString("column.filter.tt.line2");
+
+		bubbleTextBox.setTooltip( tooltip );
+		
 		FormData fd = new FormData();
 		fd.left = new FormAttachment(0, 5);
 		fd.top = new FormAttachment(btnAdd, 0, SWT.CENTER );
@@ -356,7 +339,7 @@ public class SubscriptionsView
 		fd.bottom = new FormAttachment(btnAdd, 0, SWT.CENTER );
 		fd.width = 140;
 		
-		bubbleTextBox.setMessageAndLayout( "", fd);
+		bubbleTextBox.setMessageAndLayout( MessageText.getString( "Button.search2" ), fd);
 		
 			// table section
 		
@@ -367,6 +350,7 @@ public class SubscriptionsView
 				new ColumnSubscriptionNbResults(TABLE_ID),
 				new ColumnSubscriptionAutoDownload(TABLE_ID),
 
+				new ColumnSubscriptionURL(TABLE_ID),
 				new ColumnSubscriptionMaxResults(TABLE_ID),
 				new ColumnSubscriptionLastChecked(TABLE_ID),
 				new ColumnSubscriptionSubscribers(TABLE_ID),
@@ -389,8 +373,10 @@ public class SubscriptionsView
 		tcm.setDefaultColumnNames(TABLE_ID, columns);
 		tcm.setDefaultSortColumnName(TABLE_ID, "name");
 				
-		view = TableViewFactory.createTableViewSWT(Subscription.class, TABLE_ID, TABLE_ID,
+		view = TableViewFactory.createTableViewSWT(Subscription.class, TABLE_ID, TABLE_ID + ".view",
 				columns, "name", SWT.MULTI | SWT.FULL_SELECTION | SWT.VIRTUAL);
+
+		col_filter_helper = new TableColumnFilterHelper<>( view, "subsv" );
 
 		view.enableFilterCheck(bubbleTextBox, this );
 		
@@ -412,41 +398,45 @@ public class SubscriptionsView
 			}
 
 		});
+		
+		PluginInterface pi = PluginInitializer.getDefaultInterface();
+		UIManager uim = pi.getUIManager();
 
+		MenuManager  menu_manager 	= uim.getMenuManager();
+		TableManager table_manager 	= uim.getTableManager();
+
+		ArrayList<TableContextMenuItem>	menu_items = new ArrayList<>();
+
+		SubscriptionManagerUI.MenuCreator menu_creator =
+			new SubscriptionManagerUI.MenuCreator()
+			{
+				@Override
+				public com.biglybt.pif.ui.menus.MenuItem
+				newItem(
+					String 	resource_id, 
+					MenuItemListener multiListener )
+				{
+					TableContextMenuItem menu =
+						table_manager.addContextMenuItem( TABLE_ID, resource_id );
+					menu.setDisposeWithUIDetach(UIInstance.UIT_SWT);
+
+					menu_items.add( menu );
+					
+					if (multiListener != null) {
+						menu.addMultiListener(multiListener);
+					}
+
+					return( menu );
+				}
+
+				@Override
+				public void refreshView()
+				{
+
+				}
+			};
 
 		view.addSelectionListener(new TableSelectionAdapter() {
-
-			PluginInterface pi = PluginInitializer.getDefaultInterface();
-			UIManager uim = pi.getUIManager();
-
-			MenuManager  menu_manager 	= uim.getMenuManager();
-			TableManager table_manager 	= uim.getTableManager();
-
-			ArrayList<TableContextMenuItem>	menu_items = new ArrayList<>();
-
-			SubscriptionManagerUI.MenuCreator menu_creator =
-					new SubscriptionManagerUI.MenuCreator()
-					{
-						@Override
-						public com.biglybt.pif.ui.menus.MenuItem
-						createMenu(
-							String 	resource_id )
-						{
-							TableContextMenuItem menu =
-								table_manager.addContextMenuItem( TABLE_ID, resource_id );
-							menu.setDisposeWithUIDetach(UIInstance.UIT_SWT);
-
-							menu_items.add( menu );
-
-							return( menu );
-						}
-
-						@Override
-						public void refreshView()
-						{
-
-						}
-					};
 
 			@Override
 			public void defaultSelected(TableRowCore[] rows, int stateMask) {
@@ -508,34 +498,36 @@ public class SubscriptionsView
 				
 				ISelectedContent[] sels = new ISelectedContent[rows.length];
 
-				java.util.List<Subscription> subs = new ArrayList<>();
-
 				for (int i=0;i<rows.length;i++){
-
-					Subscription sub = (Subscription)rows[i].getDataSource();
-
-					sels[i] = new SubscriptionSelectedContent( sub );
-
-					if ( sub != null ){
-
-						subs.add( sub );
-					}
+					sels[i] = new SubscriptionSelectedContent( (Subscription)rows[i].getDataSource() );
 				}
 
 				SelectedContentManager.changeCurrentlySelectedContent(view.getTableID(), sels, view);
 
-				for ( TableContextMenuItem mi: menu_items ){
-
-					mi.remove();
-				}
-
-				if ( subs.size() > 0 ){
-
-					SubscriptionManagerUI.createMenus( menu_manager, menu_creator, subs.toArray( new Subscription[0] ));
-				}
 			}
 
-		}, false) ;
+		}, false);
+
+		view.addMenuFillListener(new TableViewSWTMenuFillListener() {
+			@Override
+			public void fillMenu(String sColumnName, Menu menu) {
+				// Don't directly access {menu}, we add our menus via table_manager.addContextMenuItem
+				SubsLists subsLists = SubscriptionManagerUI.getSubsFromTarget(view.getSelectedRows());
+
+				for ( TableContextMenuItem mi: menu_items ){
+					mi.remove();
+				}
+				menu_items.clear();
+
+				SubscriptionManagerUI.createMenus(menu_manager, menu_creator,
+					subsLists);
+			}
+
+			@Override
+			public void addThisColumnSubMenu(String sColumnName, Menu menuThisColumn) {
+
+			}
+		});
 
 		view.addKeyListener(new KeyListener() {
 			@Override
@@ -690,26 +682,14 @@ public class SubscriptionsView
 			name = GeneralUtils.getConfusableEquivalent( name, false );
 		}
 		
-		String s = regex ? filter : RegExUtil.splitAndQuote( filter, "\\s*[|;]\\s*" );
-
-		boolean	match_result = true;
-
-		if ( regex && s.startsWith( "!" )){
-
-			s = s.substring(1);
-
-			match_result = false;
-		}
-
-		Pattern pattern = RegExUtil.getCachedPattern( "subscriptions:search", s, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE );
-
-		return( pattern.matcher(name).find() == match_result );
+		return( col_filter_helper.filterCheck( ds, filter, regex, name, false ));
 	}
 
 	public void 
 	filterSet(
 		String filter)
 	{
+		col_filter_helper.filterSet(filter);
 	}
 	
 	private void refresh() {
@@ -743,7 +723,7 @@ public class SubscriptionsView
       	//dataSourceChanged(event.getData());
         break;
 
-      case UISWTViewEvent.TYPE_FOCUSGAINED:
+      case UISWTViewEvent.TYPE_SHOWN:
       	break;
 
       case UISWTViewEvent.TYPE_REFRESH:

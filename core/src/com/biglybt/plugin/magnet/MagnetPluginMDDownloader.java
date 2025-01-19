@@ -185,7 +185,7 @@ MagnetPluginMDDownloader
 		final Throwable[] 	error 				= { null };
 		final boolean[]		manually_removed 	= { false };
 		
-		final ByteArrayOutputStream	result = new ByteArrayOutputStream(32*1024);
+		ByteArrayOutputStream	result = new ByteArrayOutputStream(32*1024);
 
 		TOTorrentAnnounceURLSet[]	url_sets = null;
 
@@ -258,9 +258,9 @@ MagnetPluginMDDownloader
 		
 					setup_started = true;
 	
-					File torrents_dir = FileUtil.getUserFile( "torrents" );
-		
-					md_dir = FileUtil.newFile( torrents_dir, "md", hash_str );
+					File storage_dir = plugin.getStorageDir();
+							
+					md_dir = FileUtil.newFile( storage_dir, hash_str );
 					
 					if ( !md_dir.exists()){
 						
@@ -385,6 +385,17 @@ MagnetPluginMDDownloader
 		
 					TorrentUtils.setFlag( meta_torrent, TorrentUtils.TORRENT_FLAG_LOW_NOISE, true );
 	
+					Map<String,Object> debug_data = new HashMap<>();
+					
+					debug_data.put( "args", args );
+					
+					if ( initial_metadata != null ){
+						
+						debug_data.put( "im", initial_metadata );
+					}
+					
+					meta_torrent.setAdditionalMapProperty( "metadata_download_debug", debug_data);
+					
 					meta_torrent.serialiseToBEncodedFile( torrent_file );
 		
 					download_manager.clearNonPersistentDownloadState( hash );
@@ -1050,8 +1061,12 @@ MagnetPluginMDDownloader
 					
 					byte[]	bytes = result.toByteArray();
 	
+					result = null;	// release mem, for large torrents this can be important...
+					
 					Map<String,Object>	info = BDecoder.decode( bytes );
 	
+					bytes = null;	// release mem
+					
 					Map<String,Object>	map = new HashMap<>();
 	
 					map.put( "info", info );
@@ -1129,13 +1144,16 @@ MagnetPluginMDDownloader
 					}
 	
 					try{
-						String dn		= magnet_args.get( "dn" );
-	
-						if ( dn != null ){
-	
-							PlatformTorrentUtils.setContentTitle( torrent, dn );
+						if ( plugin.getRenameDisplayName()){
+							
+							String dn		= magnet_args.get( "dn" );
+		
+							if ( dn != null ){
+		
+								PlatformTorrentUtils.setContentTitle( torrent, dn );
+							}
 						}
-	
+						
 						String pfi_str = magnet_args.get( "pfi" );
 	
 						if ( pfi_str != null ){
@@ -1145,7 +1163,13 @@ MagnetPluginMDDownloader
 					}catch( Throwable e ){
 					}
 					
-					reportComplete( torrent, peer_networks );
+						// allows reportComplete to release torrent memory
+					
+					TOTorrent[] t = { torrent };
+					
+					torrent = null;
+					
+					reportComplete( t, peer_networks );
 	
 				}else{
 						
@@ -1320,7 +1344,7 @@ MagnetPluginMDDownloader
 		
 		private void
 		reportComplete(
-			TOTorrent		torrent,
+			TOTorrent[]		torrent,
 			Set<String>		peer_networks )
 		{
 			synchronized( INSTANCE_LOCK ){
@@ -1351,7 +1375,7 @@ MagnetPluginMDDownloader
 		
 		public void
 		complete(
-			TOTorrent		torrent,
+			TOTorrent[]		torrent,
 			Set<String>		peer_networks );
 
 		public void

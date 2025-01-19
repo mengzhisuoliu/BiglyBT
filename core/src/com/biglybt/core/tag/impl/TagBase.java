@@ -81,6 +81,7 @@ TagBase
 	protected static final String	AT_RATELIMIT_MAX_AGGREGATE_SR_ACTION	= "rl.maxaggsr.a";
 	protected static final String	AT_RATELIMIT_MAX_AGGREGATE_SR_PRIORITY	= "rl.maxaggsr.p";
 	protected static final String	AT_RATELIMIT_FP_SEEDING					= "rl.fps";
+	protected static final String	AT_RATELIMIT_NOT_FP_SEEDING				= "rl.nfps";
 	protected static final String	AT_RATELIMIT_BOOST						= "rl.bst";
 	protected static final String	AT_RATELIMIT_MAX_ACTIVE_DL				= "rl.maxadl";
 	protected static final String	AT_RATELIMIT_MAX_ACTIVE_CD				= "rl.maxacd";
@@ -161,6 +162,8 @@ TagBase
 	private TagFeatureLimits		tag_limits;
 
 	private HashMap<String,Object>		transient_properties;
+	
+	private boolean is_removed;
 	
 	protected
 	TagBase(
@@ -1430,7 +1433,7 @@ TagBase
 	public boolean
 	getFirstPrioritySeeding()
 	{
-		return( true );
+		return( false );
 	}
 
 	public void
@@ -1440,6 +1443,19 @@ TagBase
 		Debug.out( "not supported" );
 	}
 
+	public boolean
+	getNotFirstPrioritySeeding()
+	{
+		return( false );
+	}
+
+	public void
+	setNotFirstPrioritySeeding(
+		boolean		priority )
+	{
+		Debug.out( "not supported" );
+	}
+	
 	
 		// limits
 
@@ -2248,11 +2264,11 @@ TagBase
 	addTaggable(
 		Taggable	t )
 	{
+		tag_type.tagsOrMembershipChanged();
+		
 		t_listeners.dispatch( TL_ADD, t );
 
 		tag_type.taggableAdded( this, t );
-
-		tag_type.fireMembershipChanged( this );
 
 		if ( tag_limits != null ){
 
@@ -2265,12 +2281,11 @@ TagBase
 	removeTaggable(
 		Taggable	t )
 	{
+		tag_type.tagsOrMembershipChanged();
+		
 		t_listeners.dispatch( TL_REMOVE, t );
 
 		tag_type.taggableRemoved( this, t );
-
-		tag_type.fireMembershipChanged( this );
-
 	}
 
 	protected void
@@ -2292,17 +2307,39 @@ TagBase
 	@Override
 	public void
 	removeTag()
-	{
+	{	
+		synchronized( this ){
+			
+			if ( is_removed ){
+				
+				return;
+			}
+			
+			is_removed = true;
+		}
+		
 		boolean was_rss = isTagRSSFeedEnabled();
 
 		tag_type.removeTag( this );
 
+		setGroup( null );
+		
 		if ( was_rss ){
 
 			tag_type.getTagManager().checkRSSFeeds( this, false );
 		}
 
 		saveTransientStuff();
+	}
+	
+	@Override
+	public boolean 
+	isTagRemoved()
+	{
+		synchronized( this ){
+			
+			return( is_removed );
+		}
 	}
 
 	@Override
@@ -2410,6 +2447,8 @@ TagBase
 
 		for( Taggable t: taggables ){
 
+			tag_type.tagsOrMembershipChanged();
+			
 			t_listeners.dispatch( TL_REMOVE, t );
 
 			tag_type.taggableRemoved( this, t );

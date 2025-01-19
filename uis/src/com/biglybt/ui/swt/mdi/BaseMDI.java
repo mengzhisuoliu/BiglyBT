@@ -233,7 +233,7 @@ public abstract class BaseMDI
 		}
 		
 		if (currentEntry == removedItem) {
-			setCurrentEntry(null);
+			setSelectedEntry(null);
 		}
 
 		removedItem.closeView( userInitiated );
@@ -294,15 +294,15 @@ public abstract class BaseMDI
 	                                                boolean closeable, String preferedAfterID);
 
 	@Override
-	public MdiEntrySWT getCurrentEntry() {
+	public MdiEntrySWT getSelectedEntry() {
 		if (isDisposed()) {
 			return null;
 		}
 		return currentEntry;
 	}
-
+	
 	protected void
-	setCurrentEntry(
+	setSelectedEntry(
 		MdiEntrySWT		entry )
 	{
 		currentEntry = entry;
@@ -402,7 +402,7 @@ public abstract class BaseMDI
 	private boolean createIfAutoOpen(String id) {
 		
 		
-			// carefull with scope of locking on autoOpenLock - make it larger and you'll
+			// careful with scope of locking on autoOpenLock - make it larger and you'll
 			// get deadlocks...
 
 		Map<?, ?> autoOpenInfo;
@@ -686,7 +686,7 @@ public abstract class BaseMDI
 
 	@Override
 	public void updateUI() {
-		MdiEntry currentEntry = getCurrentEntry();
+		MdiEntry currentEntry = getSelectedEntry();
 		if (currentEntry != null) {
 			currentEntry.updateUI( false );
 		}
@@ -896,7 +896,17 @@ public abstract class BaseMDI
 					}
 				}
 			}else{
-				initialID = MapUtils.getMapString(loadedMap, CLOSEABLECONFIG_INITIALID, null);
+				String sas = getShowIDAtStartup();
+				
+				if ( sas != null && !sas.isEmpty()){
+					
+					initialID = sas;
+					
+				}else{
+					
+					initialID = MapUtils.getMapString(loadedMap, CLOSEABLECONFIG_INITIALID, null);
+				}
+				
 				if (initialID == null) {
 					String legacyStartTab = COConfigurationManager.getStringParameter("v3.StartTab", null);
 					if (legacyStartTab != null) {
@@ -925,13 +935,26 @@ public abstract class BaseMDI
 				//if (currentEntry != null && !currentEntry.getViewID().equals(initialID)) {
 				//	System.out.println("currentEntry set to " + currentEntry.getViewID() + " before initial " + initialID);
 				//}
-				if (currentEntry == null && initialDef != null) {
-					SimpleTimer.addEvent("ShowDefEntry", SystemTime.getOffsetTime(3000),
-							event -> {
-								if (currentEntry == null) {
-									showEntryByID(initialDef);
+				
+				if ( currentEntry == null ){
+					
+					if ( getEntry( initialID ) != null || initialDef != null ){
+					
+						SimpleTimer.addEvent(
+							"ShowDefEntry", 
+							SystemTime.getOffsetTime(3000),
+							event->{
+								if (currentEntry == null ){
+									
+									if ( getEntry( initialID ) != null ){
+										showEntryByID(initialID);
+									}else if ( initialDef != null ){
+										showEntryByID(initialDef);
+									}
 								}
 							});
+		
+					}
 				}
 			}
 		}catch( Throwable e ){
@@ -944,6 +967,12 @@ public abstract class BaseMDI
 		}
 	}
 
+	protected String
+	getShowIDAtStartup()
+	{
+		return( null );
+	}
+	
 	protected void saveCloseables(){
 		saveCloseables( false );
 	}
@@ -967,14 +996,14 @@ public abstract class BaseMDI
 				return;
 			}
 			
-			try{
-								
+			try{					
+				if ( closed ){
+					
+					return;
+				}
+
 				if ( interim ){
 					
-					if ( closed ){
-						
-						return;
-					}
 				}else{
 					
 					closed = true;
@@ -1137,7 +1166,8 @@ public abstract class BaseMDI
 
 		setEntryAutoOpen(id, entry.getAutoOpenInfo());
 
-		if (currentEntry == null && id.equals(initialID)) {
+		if ( currentEntry == null && id.equals(initialID)){
+			
 			showEntryByID(initialID);
 		}
 	}
@@ -1262,6 +1292,27 @@ public abstract class BaseMDI
 
 
 	public void fillMenu(Menu menu, final MdiEntry entry, String menuID) {
+		if (entry != null) {
+			MdiSWTMenuHackListener[] menuHackListeners = getMenuHackListeners();
+			for (MdiSWTMenuHackListener l : menuHackListeners) {
+				try {
+					l.menuWillBeShown(entry, menu);
+				} catch (Exception e) {
+					Debug.out(e);
+				}
+			}
+			if (entry instanceof BaseMdiEntry) {
+				menuHackListeners = ((BaseMdiEntry) entry).getMenuHackListeners();
+				for (MdiSWTMenuHackListener l : menuHackListeners) {
+					try {
+						l.menuWillBeShown(entry, menu);
+					} catch (Exception e) {
+						Debug.out(e);
+					}
+				}
+			}
+		}
+
 		com.biglybt.pif.ui.menus.MenuItem[] menu_items;
 
 		menu_items = MenuItemManager.getInstance().getAllAsArray(menuID);
@@ -1330,25 +1381,6 @@ public abstract class BaseMDI
 					new MenuBuildUtils.MenuItemPluginMenuControllerImpl(new Object[] {
 						entry
 					}));
-
-			MdiSWTMenuHackListener[] menuHackListeners = getMenuHackListeners();
-			for (MdiSWTMenuHackListener l : menuHackListeners) {
-				try {
-					l.menuWillBeShown(entry, menu);
-				} catch (Exception e) {
-					Debug.out(e);
-				}
-			}
-			if (currentEntry instanceof BaseMdiEntry) {
-				menuHackListeners = ((BaseMdiEntry) entry).getMenuHackListeners();
-				for (MdiSWTMenuHackListener l : menuHackListeners) {
-					try {
-						l.menuWillBeShown(entry, menu);
-					} catch (Exception e) {
-						Debug.out(e);
-					}
-				}
-			}
 		}
 
 		menu_items = MenuItemManager.getInstance().getAllAsArray(menuID + "._end_");

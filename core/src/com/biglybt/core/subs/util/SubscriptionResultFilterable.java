@@ -1,24 +1,20 @@
 /*
- * Created on Dec 2, 2016
- * Created by Paul Gardner
+ * Copyright (C) Bigly Software.  All Rights Reserved.
  *
- * Copyright 2016 Azureus Software, Inc.  All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307, USA.
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
  */
-
 
 package com.biglybt.core.subs.util;
 
@@ -44,6 +40,7 @@ SubscriptionResultFilterable
 	private final String			torrent_link;
 	private final String			details_link;
 	private final String			category;
+	private final String			desc;
 
 	private long				time;
 	private boolean				read;
@@ -51,6 +48,7 @@ SubscriptionResultFilterable
 	private String				seeds_peers;
 	private int					seed_count;
 	private int					peer_count;
+	private int					completed_count;
 	private long				votes_comments_sort;
 	private String				votes_comments;
 	private int					rank;
@@ -91,8 +89,10 @@ SubscriptionResultFilterable
 			}
 		}
 
-		size = (Long)properties.get( SearchResult.PR_SIZE );
+		Long l_size = (Long)properties.get( SearchResult.PR_SIZE );
 
+		size = l_size==null?0:l_size;
+		
 		String tl = (String)properties.get( SearchResult.PR_TORRENT_LINK );
 
 		if ( tl == null ){
@@ -112,6 +112,8 @@ SubscriptionResultFilterable
 			
 			asset_date = ad.getTime();
 		}
+		
+		desc = (String)(String)properties.get( SearchResult.PR_DESCRIPTION );
 		
 		updateMutables( _result, properties );
 	}
@@ -147,6 +149,10 @@ SubscriptionResultFilterable
 
 		long seeds 		= (Long)properties.get( SearchResult.PR_SEED_COUNT );
 		long leechers 	= (Long)properties.get( SearchResult.PR_LEECHER_COUNT );
+
+		long cc = (Long)properties.get( SearchResult.PR_COMPLETED_COUNT );
+		
+		completed_count 	= cc<0?-1:(int)cc;
 
 		seed_count = (int)(seeds<0?0:seeds);
 		peer_count = (int)(leechers<0?0:leechers);
@@ -272,6 +278,13 @@ SubscriptionResultFilterable
 	}
 
 	@Override
+	public int 
+	getNbCompleted()
+	{
+		return( completed_count );
+	}
+	
+	@Override
 	public String
 	getVotesComments()
 	{
@@ -313,6 +326,13 @@ SubscriptionResultFilterable
 		return( category );
 	}
 
+	@Override
+	public String 
+	getDescription()
+	{
+		return( desc );
+	}
+	
 	@Override
 	public String[] 
 	getTags()

@@ -198,7 +198,7 @@ public class MainStatusBar
 	 */
 	public MainStatusBar() {
 		numberFormat = NumberFormat.getInstance();
-		// Proably need to wait for core to be running to make sure dht plugin is fully avail
+		// Probably need to wait for core to be running to make sure dht plugin is fully avail
 		CoreFactory.addCoreRunningListener(new CoreRunningListener() {
 			@Override
 			public void coreRunning(Core core) {
@@ -1801,6 +1801,9 @@ public class MainStatusBar
 
 		private Image bgImage;
 
+		private String lastTextComputed;
+		private Point lastTextSizeComputed;
+		
 		/**
 		 * Default Constructor
 		 *
@@ -1967,13 +1970,25 @@ public class MainStatusBar
 				lastSize.y = bounds.height;
 			}
 
-			GC gc = new GC(this);
-			GCStringPrinter sp = new GCStringPrinter(gc, getText(), new Rectangle(0,
-					0, 10000, 20), true, true, SWT.LEFT);
-			sp.calculateMetrics();
-			Point lastTextSize = sp.getCalculatedSize();
-			gc.dispose();
-
+			Point lastTextSize;
+			
+			String text = getText();
+			
+			if ( lastTextComputed != null && lastTextComputed.equals( text )){
+				
+				lastTextSize = lastTextSizeComputed;
+			}else{
+				GC gc = new GC(this);
+				GCStringPrinter sp = new GCStringPrinter(gc, text, new Rectangle(0,
+						0, 10000, 20), true, true, SWT.LEFT);
+				sp.calculateMetrics();
+				lastTextSize = sp.getCalculatedSize();
+				gc.dispose();
+				
+				lastTextComputed		= text;
+				lastTextSizeComputed	= lastTextSize;
+			}
+			
 			lastSize.x += lastTextSize.x + 10;
 			lastSize.y = Math.max(lastSize.y, lastTextSize.y);
 
@@ -2278,7 +2293,7 @@ public class MainStatusBar
 		{
 			if ( eventType == MANAGER_EVENT_UPDATED ){
 
-					// reduce pointless refreshes due to multple update events
+					// reduce pointless refreshes due to multiple update events
 
 				synchronized( pending_updates ){
 

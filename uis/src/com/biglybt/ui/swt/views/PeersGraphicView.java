@@ -589,8 +589,8 @@ implements UIPluginViewToolBarListener, UISWTViewCoreEventListener
 							int	x = event.x;
 							int y = event.y;
 
-							PEPeer 			target 			= null;
-							DownloadManager	target_manager 	= null;
+							PEPeer 					target 			= null;
+							List<DownloadManager>	target_managers = new ArrayList<>();
 
 							synchronized( dm_data_lock ){
 
@@ -610,7 +610,7 @@ implements UIPluginViewToolBarListener, UISWTViewCoreEventListener
 
 											target = entry.getKey();
 
-											target_manager	= manager;
+											target_managers.add( manager );
 
 											break;
 										}
@@ -637,7 +637,7 @@ implements UIPluginViewToolBarListener, UISWTViewCoreEventListener
 
 							menu = new Menu( canvas );
 
-							PeersViewBase.fillMenu( menu, target, target_manager );
+							PeersViewBase.fillMenu( menu, target, target_managers );
 
 							final Point cursorLocation = Display.getCurrent().getCursorLocation();
 
@@ -1746,7 +1746,7 @@ implements UIPluginViewToolBarListener, UISWTViewCoreEventListener
 		case UISWTViewEvent.TYPE_FOCUSGAINED:
 			String id = "DMDetails_Swarm";
 
-			setFocused( true );	// do this before next code as it can pick up the corrent 'manager' ref
+			setFocused( true );	// do this before next code as it can pick up the current 'manager' ref
 
 			synchronized( dm_data_lock ){
 

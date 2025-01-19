@@ -68,7 +68,11 @@ import com.biglybt.pif.ui.tables.TableRow;
 public class TableColumnSetupWindow
 	implements UIUpdatable
 {
-	private static final String TABLEID_AVAIL = "ColumnSetupAvail";
+	private static final int RESULT_AREA_WIDTH	= Constants.isWindows?250:280;
+	private static final int SHELL_WIDTH		= RESULT_AREA_WIDTH + 600;
+	
+	public static final String TABLEID_AVAIL		= "ColumnSetupAvail";
+	public static final String TABLEID_ROW_DETAILS	= "RowDetails";
 
 	private static final String TABLEID_CHOSEN = "ColumnSetupChosen";
 
@@ -94,7 +98,8 @@ public class TableColumnSetupWindow
 	private final TableColumnCore[] columnsOriginalOrder;
 
 	private final TableRow sampleRow;
-
+	private final boolean rowDetailsOnly;
+	
 	private DragSourceListener dragSourceListener;
 
 	private final TableStructureModificationListener<?> listener;
@@ -122,10 +127,13 @@ public class TableColumnSetupWindow
 		String 			_tableID,
 		TableColumnCore	selectedColumn,
 		TableRow 		sampleRow, 
-		TableStructureModificationListener<?> _listener) 
+		TableStructureModificationListener<?> _listener,
+		boolean			_rowDetailsOnly ) 
 	{
-		this.sampleRow = sampleRow;
-		this.listener = _listener;
+		this.sampleRow		= sampleRow;
+		this.listener		= _listener;
+		this.rowDetailsOnly	= _rowDetailsOnly;
+		
 		FormData fd;
 		this.forDataSourceType = forDataSourceType;
 		forTableID = _tableID;
@@ -234,12 +242,19 @@ public class TableColumnSetupWindow
 		shell = ShellFactory.createShell(Utils.findAnyShell(), SWT.SHELL_TRIM);
 		Utils.setShellIcon(shell);
 		FormLayout formLayout = new FormLayout();
-		shell.setText(MessageText.getString("ColumnSetup.title", new String[] {
-			tableName
-		}));
+		
+		if ( rowDetailsOnly ){
+			shell.setText(MessageText.getString("label.row.details"));
+		}else{
+			shell.setText(MessageText.getString("ColumnSetup.title", new String[] {
+				tableName
+			}));
+		}
+		
 		shell.setLayout(formLayout);
-		shell.setSize(780, 550);
-
+		shell.setSize(SHELL_WIDTH, 550);
+		Utils.linkShellMetricsToConfig(shell, rowDetailsOnly?"rowdetails":"tablecolsetup");
+		
 		shell.addTraverseListener(new TraverseListener() {
 			@Override
 			public void keyTraversed(TraverseEvent e) {
@@ -264,7 +279,20 @@ public class TableColumnSetupWindow
 		fd.bottom = null;
 		topInfo.setLayoutData(fd);
 
-		Button btnOk = new Button(shell, SWT.PUSH);
+		cPickArea = Utils.createSkinnedGroup(shell, SWT.NONE);
+		cPickArea.setLayout(new FormLayout());
+
+		
+		final Button btnDefault = new Button(shell, SWT.PUSH);
+		Messages.setLanguageText(btnDefault, "label.default");
+		Utils.setTT(btnDefault, MessageText.getString( "label.set.as.default.for.new.views" ));
+		btnDefault.addListener(SWT.Selection,(ev)->{
+			tcm.saveTableColumns(forDataSourceType, forTableID);
+			Map config = tcm.getTableConfigMap(forTableID);
+			tcm.setTableConfigDefault(forTableID,config);
+		});		
+		
+		Button btnOk = new Button(rowDetailsOnly?cPickArea:shell, SWT.PUSH);
 		Messages.setLanguageText(btnOk, "Button.ok");
 		btnOk.addSelectionListener(new SelectionAdapter() {
 			@Override
@@ -273,11 +301,7 @@ public class TableColumnSetupWindow
 				shell.dispose();
 			}
 		});
-
-		cPickArea = Utils.createSkinnedGroup(shell, SWT.NONE);
-		cPickArea.setLayout(new FormLayout());
-
-
+		
 		final ExpandBar expandFilters = new ExpandBar(cPickArea, SWT.NONE);
 		expandFilters.setSpacing(1);
 
@@ -288,6 +312,9 @@ public class TableColumnSetupWindow
 		Messages.setLanguageText(cResultArea, "ColumnSetup.chosencolumns");
 		cResultArea.setLayout(new FormLayout());
 
+		if ( rowDetailsOnly ){
+			cResultArea.setVisible( false );
+		}
 		Composite cResultButtonArea = new Composite(cResultArea, SWT.NONE);
 		cResultButtonArea.setLayout(new FormLayout());
 
@@ -821,9 +848,12 @@ public class TableColumnSetupWindow
 											
 						tcm.loadTableColumnSettings( forDataSourceType, forTableID );
 						
-						listener.tableStructureChanged(true, forDataSourceType);
-						
-						listener.sortOrderChanged();
+						if ( listener != null ){
+							
+							listener.tableStructureChanged(true, forDataSourceType);
+							
+							listener.sortOrderChanged();
+						}
 						
 						Arrays.sort(columnsCurrentOrder,TableColumnManager.getTableColumnOrderComparator());
 	
@@ -921,13 +951,22 @@ public class TableColumnSetupWindow
 		//fd.bottom = new FormAttachment(100, -5);
 		//Utils.setLayoutData(lblChosenHeader, fd);
 
-		fd = new FormData();
-		fd.top = new FormAttachment(topInfo, 5);
-		fd.right = new FormAttachment(100, -3);
-		fd.bottom = new FormAttachment(btnOk, -5);
-		fd.width = Constants.isWindows?200:230;
-		cResultArea.setLayoutData(fd);
-
+		if ( rowDetailsOnly ){
+			fd = new FormData();
+			fd.top = new FormAttachment(0, 5);
+			fd.right = new FormAttachment(100, -3);
+			fd.bottom = new FormAttachment(btnOk, -5);
+			fd.width = RESULT_AREA_WIDTH;
+			cResultArea.setLayoutData(fd);
+		}else{
+			fd = new FormData();
+			fd.top = new FormAttachment(topInfo, 5);
+			fd.right = new FormAttachment(100, -3);
+			fd.bottom = new FormAttachment(btnOk, -5);
+			fd.width = RESULT_AREA_WIDTH;
+			cResultArea.setLayoutData(fd);
+		}
+		
 		fd = new FormData();
 		fd.top = new FormAttachment(0, 3);
 		fd.left = new FormAttachment(0, 3);
@@ -1010,45 +1049,76 @@ public class TableColumnSetupWindow
   		fd.bottom = new FormAttachment(btnReset, 0, SWT.BOTTOM);
   		btnExport.setLayoutData(fd);
 	
+  		if ( rowDetailsOnly ){
 		
-  		fd = new FormData();
-  		fd.right = new FormAttachment(btnApply, -3);
-  		fd.bottom = new FormAttachment(btnApply, 0, SWT.BOTTOM);
-		btnReset.setLayoutData(fd);
+			fd = new FormData();
+			fd.right = new FormAttachment(100, -3);
+			fd.bottom = new FormAttachment(100, 0);
+			fd.width = 75;
+			btnOk.setLayoutData(fd);
+			
+  			fd = new FormData();
+  			fd.top = new FormAttachment(0, 5);
+  			fd.left = new FormAttachment(0, 3);
+  			fd.right = new FormAttachment(100, -3);
+  			fd.bottom = new FormAttachment(100, -3);
+  			cPickArea.setLayoutData(fd);
+  			
+  			fd = new FormData();
+  			fd.bottom = new FormAttachment(100, 0);
+  			fd.left = new FormAttachment(0, 0);
+  			fd.right = new FormAttachment(btnOk, -3);
+  			expandFilters.setLayoutData(fd);
 
-		fd = new FormData();
-		fd.right = new FormAttachment(100, -5);
-		fd.top = new FormAttachment(btnUp, 3, SWT.BOTTOM);
-		//fd.width = 64;
-		btnApply.setLayoutData(fd);
-
-		fd = new FormData();
-		fd.right = new FormAttachment(100, -8);
-		fd.bottom = new FormAttachment(100, -3);
-		//fd.width = 65;
-		btnCancel.setLayoutData(fd);
-
-		fd = new FormData();
-		fd.right = new FormAttachment(btnCancel, -3);
-		fd.bottom = new FormAttachment(btnCancel, 0, SWT.BOTTOM);
-		//fd.width = 64;
-		btnOk.setLayoutData(fd);
+  			btnCancel.setVisible( false );
+  			btnDefault.setVisible( false );
+  			
+  			topInfo.setVisible( false );
+  			
+  		}else{
+	  		fd = new FormData();
+	  		fd.right = new FormAttachment(btnApply, -3);
+	  		fd.bottom = new FormAttachment(btnApply, 0, SWT.BOTTOM);
+			btnReset.setLayoutData(fd);
+	
+			fd = new FormData();
+			fd.right = new FormAttachment(100, -5);
+			fd.top = new FormAttachment(btnUp, 3, SWT.BOTTOM);
+			//fd.width = 64;
+			btnApply.setLayoutData(fd);
+	
+			fd = new FormData();
+			fd.left = new FormAttachment(cPickArea, 3, SWT.RIGHT);
+			fd.bottom = new FormAttachment(100, -3);
+			btnDefault.setLayoutData(fd);
+			
+			fd = new FormData();
+			fd.right = new FormAttachment(100, -8);
+			fd.bottom = new FormAttachment(100, -3);
+			//fd.width = 65;
+			btnCancel.setLayoutData(fd);
+	
+			fd = new FormData();
+			fd.right = new FormAttachment(btnCancel, -3);
+			fd.bottom = new FormAttachment(btnCancel, 0, SWT.BOTTOM);
+			//fd.width = 64;
+			btnOk.setLayoutData(fd);
+			
+			fd = new FormData();
+			fd.top = new FormAttachment(topInfo, 5);
+			fd.left = new FormAttachment(0, 3);
+			fd.right = new FormAttachment(cResultArea, -3);
+			fd.bottom = new FormAttachment(100, -3);
+			cPickArea.setLayoutData(fd);
+			
+			fd = new FormData();
+			fd.bottom = new FormAttachment(100, 0);
+			fd.left = new FormAttachment(0, 0);
+			fd.right = new FormAttachment(100, 0);
+			expandFilters.setLayoutData(fd);
+  		}
 
 		// <<<<<<<<< Chosen
-
-		fd = new FormData();
-		fd.top = new FormAttachment(topInfo, 5);
-		fd.left = new FormAttachment(0, 3);
-		fd.right = new FormAttachment(cResultArea, -3);
-		fd.bottom = new FormAttachment(100, -3);
-		cPickArea.setLayoutData(fd);
-
-		fd = new FormData();
-		fd.bottom = new FormAttachment(100, 0);
-		fd.left = new FormAttachment(0, 0);
-		fd.right = new FormAttachment(100, 0);
-		expandFilters.setLayoutData(fd);
-
 
 		if (CAT_BUTTONS) {
 			fd = new FormData();
@@ -1062,10 +1132,10 @@ public class TableColumnSetupWindow
 			fd.left = new FormAttachment(0, 0);
 			lblProficiency.setLayoutData(fd);
 
-  		fd = new FormData();
-  		fd.top = new FormAttachment(cProficiency, 5);
-  		fd.left = new FormAttachment(lblCat, 5);
-  		fd.right = new FormAttachment(100, 0);
+	  		fd = new FormData();
+	  		fd.top = new FormAttachment(cProficiency, 5);
+	  		fd.left = new FormAttachment(lblCat, 5);
+	  		fd.right = new FormAttachment(100, 0);
 			cCategories.setLayoutData(fd);
 		} else {
 			fd = new FormData();
@@ -1097,20 +1167,36 @@ public class TableColumnSetupWindow
 		//cTableAvail.setFocus();
 		//tvAvail.getTableComposite().setFocus();
 
-		shell.setTabList(new Control[] {
-			cPickArea,
-			cResultArea,
-			btnOk,
-			btnCancel,
-		});
-
-		cPickArea.setTabList(new Control[] {
-			cTableAvail
-		});
-
+		if ( rowDetailsOnly ){
+			
+			shell.setTabList(new Control[] {
+					cPickArea,
+				});
+		
+				cPickArea.setTabList(new Control[] {
+					cTableAvail,
+					btnOk
+				});
+				
+		}else{
+		
+			shell.setTabList(new Control[] {
+				cPickArea,
+				cResultArea,
+				btnOk,
+				btnCancel,
+			});
+	
+			cPickArea.setTabList(new Control[] {
+				cTableAvail
+			});
+		}
+		
 		fillAvail();
 
 		UIUpdaterSWT.getInstance().addUpdater(this);
+		
+		shell.open();
 	}
 
 	private void
@@ -1345,7 +1431,10 @@ public class TableColumnSetupWindow
 		}
 		
 		tcm.saveTableColumns(forDataSourceType, forTableID);
-		listener.tableStructureChanged(true, forDataSourceType);
+		
+		if ( listener != null ){
+			listener.tableStructureChanged(true, forDataSourceType);
+		}
 		
 		setHasChanges( false );
 	}
@@ -1363,7 +1452,7 @@ public class TableColumnSetupWindow
 			TableColumnCore column = columnTVChosen[i];
 			if (column.getName().equals(ColumnTC_ChosenColumn.COLUMN_ID)) {
 				column.setVisible(true);
-				column.setWidth(175);
+				column.setWidth(RESULT_AREA_WIDTH-30);
 				column.setSortAscending(true);
 			} else {
 				column.setVisible(false);
@@ -1457,9 +1546,11 @@ public class TableColumnSetupWindow
 	 * @since 4.0.0.5
 	 */
 	private TableViewSWT<TableColumn> createTVAvail() {
+		String tableID = rowDetailsOnly?TABLEID_ROW_DETAILS:TABLEID_AVAIL;
+
 		final TableColumnManager tcm = TableColumnManager.getInstance();
 		Map<String, TableColumnCore> mapColumns = tcm.getTableColumnsAsMap(
-				TableColumn.class, TABLEID_AVAIL);
+				TableColumn.class, tableID);
 		TableColumnCore[] columns;
 		int[] widths = { 405, 105 };
 		if (sampleRow == null) {
@@ -1478,16 +1569,19 @@ public class TableColumnSetupWindow
 			if (column != null) {
 				column.setVisible(true);
 				column.setPositionNoShift(i);
-				column.setWidth(widths[i]);
+				int existing = column.getWidth();
+				if ( existing < widths[i] ){
+					column.setWidth(widths[i]);
+				}
 			}
 		}
-
+		
 		final TableViewSWT<TableColumn> tvAvail = TableViewFactory.createTableViewSWT(
-				TableColumn.class, TABLEID_AVAIL, TABLEID_AVAIL, columns,
+				TableColumn.class, tableID, tableID, columns,
 				ColumnTC_NameInfo.COLUMN_ID, SWT.FULL_SELECTION | SWT.VIRTUAL
 						| SWT.SINGLE);
 		tvAvail.setParentDataSource(this);
-		tvAvail.setMenuEnabled(false);
+		//tvAvail.setMenuEnabled(false);
 
 		tvAvail.setRowDefaultHeightEM(5);
 
@@ -1574,10 +1668,6 @@ public class TableColumnSetupWindow
 		});
 
 		return tvAvail;
-	}
-
-	public void open() {
-		shell.open();
 	}
 
 	// @see UIUpdatable#getUpdateUIName()

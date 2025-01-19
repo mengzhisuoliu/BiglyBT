@@ -19,6 +19,7 @@
 
 package com.biglybt.core.tracker.client.impl;
 
+import java.net.InetAddress;
 import java.net.URL;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
@@ -28,6 +29,7 @@ import com.biglybt.core.internat.MessageText;
 import com.biglybt.core.logging.LogEvent;
 import com.biglybt.core.logging.LogIDs;
 import com.biglybt.core.logging.Logger;
+import com.biglybt.core.networkmanager.admin.NetworkAdmin;
 import com.biglybt.core.torrent.TOTorrent;
 import com.biglybt.core.tracker.TrackerPeerSource;
 import com.biglybt.core.tracker.TrackerPeerSourceAdapter;
@@ -380,12 +382,36 @@ TRTrackerAnnouncerImpl
 				return( 0 );
 			}
 
+			NetworkAdmin admin = NetworkAdmin.getSingleton();
+
 			try{
 				tracker_peer_cache_mon.enter();
 
 				List<TRTrackerAnnouncerResponsePeer>	peers = TRTrackerAnnouncerFactoryImpl.getCachedPeers( map );
 
-				for ( TRTrackerAnnouncerResponsePeer peer: peers ){
+				for ( TRTrackerAnnouncerResponsePeer peer: peers ){				
+
+					String address = peer.getAddress();
+					
+					String network = AENetworkClassifier.categoriseAddress( address );
+				   
+					if ( network == AENetworkClassifier.AT_PUBLIC ){
+					
+							// don't add ourselves to the cache, likely not useful
+							// ignore port in case our port has changed and this is stale
+							// info
+						
+						try{
+							InetAddress ip = InetAddress.getByName( address );
+							
+							if ( admin.isRecentPublicIPAddress( ip )){
+								
+								continue;
+							}
+						}catch( Throwable e ){
+							
+						}
+					}
 					
 					tracker_peer_cache.put( peer.getKey(), peer );
 				}
@@ -417,6 +443,8 @@ TRTrackerAnnouncerImpl
 
 		// System.out.println( "max peers= " + max );
 
+		NetworkAdmin admin = NetworkAdmin.getSingleton();
+				
 		try{
 			tracker_peer_cache_mon.enter();
 
@@ -424,6 +452,28 @@ TRTrackerAnnouncerImpl
 
 				TRTrackerAnnouncerResponsePeerImpl	peer = peers[i];
 
+				String address = peer.getAddress();
+				
+				String network = AENetworkClassifier.categoriseAddress( address );
+			   
+				if ( network == AENetworkClassifier.AT_PUBLIC ){
+				
+						// don't add ourselves to the cache, likely not useful
+						// ignore port in case our port has changed and this is stale
+						// info
+					
+					try{
+						InetAddress ip = InetAddress.getByName( address );
+						
+						if ( admin.isRecentPublicIPAddress( ip )){
+							
+							continue;
+						}
+					}catch( Throwable e ){
+						
+					}
+				}
+				
 				peer = peer.getClone();
 				
 				peer.setCached( true );

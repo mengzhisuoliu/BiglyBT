@@ -34,6 +34,7 @@ import com.biglybt.ui.common.table.impl.TableColumnManager;
 import com.biglybt.ui.common.updater.UIUpdatable;
 import com.biglybt.ui.mdi.MultipleDocumentInterface;
 import com.biglybt.ui.swt.columns.dlhistory.*;
+import com.biglybt.ui.swt.components.BubbleTextBox;
 import com.biglybt.ui.swt.skin.SWTSkinObjectTextbox;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.layout.GridLayout;
@@ -68,6 +69,7 @@ import com.biglybt.ui.swt.views.table.TableViewSWT;
 import com.biglybt.ui.swt.views.table.TableViewSWTMenuFillListener;
 import com.biglybt.ui.swt.views.table.impl.TableViewFactory;
 import com.biglybt.ui.swt.views.table.utils.TableColumnCreator;
+import com.biglybt.ui.swt.views.table.utils.TableColumnFilterHelper;
 import com.biglybt.ui.swt.views.tableitems.ColumnDateSizer;
 import com.biglybt.ui.swt.views.utils.ManagerUtils;
 
@@ -88,6 +90,8 @@ public class SBC_DownloadHistoryView
 
 	private TableViewSWT<DownloadHistory> tv;
 
+	private TableColumnFilterHelper<DownloadHistory>	col_filter_helper;
+	 
 	private Composite table_parent;
 
 	private boolean columnsAdded = false;
@@ -240,6 +244,8 @@ public class SBC_DownloadHistoryView
 			tv = null;
 		}
 
+		col_filter_helper = null;
+		
 		Utils.disposeSWTObjects(new Object[] {
 			table_parent,
 		});
@@ -319,10 +325,26 @@ public class SBC_DownloadHistoryView
 					ColumnDLHistoryName.COLUMN_ID,
 					SWT.MULTI | SWT.FULL_SELECTION | SWT.VIRTUAL);
 
-			SWTSkinObjectTextbox soFilter = (SWTSkinObjectTextbox) getSkinObject(
-				"filterbox");
-			if (soFilter != null) {
-				tv.enableFilterCheck(soFilter.getBubbleTextBox(), this);
+			SWTSkinObjectTextbox soFilter = (SWTSkinObjectTextbox) getSkinObject("filterbox");
+			
+			if ( soFilter != null ){
+				
+				col_filter_helper = new TableColumnFilterHelper<DownloadHistory>( tv, "downloadhistoryview:search" );
+
+				BubbleTextBox bubbleTextBox = soFilter.getBubbleTextBox();
+				
+				tv.enableFilterCheck( bubbleTextBox, this);
+				
+				String tooltip = MessageText.getString("filter.tt.start");
+				tooltip += MessageText.getString("dlh.filter.tt.line1");
+				tooltip += MessageText.getString("dlh.filter.tt.line2");
+				tooltip += MessageText.getString("dlh.filter.tt.line3");
+				tooltip += MessageText.getString("column.filter.tt.line1");
+				tooltip += MessageText.getString("column.filter.tt.line2");
+				
+				bubbleTextBox.setTooltip( tooltip );	
+				
+				bubbleTextBox.setMessage( MessageText.getString( "Button.search2" ) );
 			}
 
 			tv.setRowDefaultHeightEM(1);
@@ -789,6 +811,7 @@ public class SBC_DownloadHistoryView
 	filterSet(
 		String filter)
 	{
+		col_filter_helper.filterSet( filter );
 	}
 
 	@Override
@@ -806,21 +829,43 @@ public class SBC_DownloadHistoryView
 		
 		Object o_name;
 
-		if ( filter.startsWith( "t:" )){
+		if ( filter.startsWith( "h:" )){
 
 			filter = filter.substring( 2 );
 
-			byte[] hash = ds.getTorrentHash();
-
 			List<String> names = new ArrayList<>();
 
-			names.add( ByteFormatter.encodeString( hash ));
+			byte[] hash = ds.getTorrentHash();
 
-			names.add( Base32.encode( hash ));
+			if ( hash != null ){
+				
+				names.add( ByteFormatter.encodeString( hash ));
+	
+				names.add( Base32.encode( hash ));
+			}
+			
+			byte[] v2_hash = ds.getTorrentV2Hash();
 
+			if ( v2_hash != null ){
+				
+				names.add( ByteFormatter.encodeString( v2_hash ));
+	
+				names.add( Base32.encode( v2_hash ));
+			}
+			
 			o_name = names;
 
-		}else if ( filter.startsWith( "f:" )){
+		}else if ( filter.startsWith( "t:" ) || filter.startsWith( "tag:" )){
+
+			filter = filter.substring( filter.startsWith( "t:" )?2:4 );
+
+			String[] tags = ds.getTags();
+				
+			List<String> names = new ArrayList<>( Arrays.asList( tags ));
+				
+			o_name = names;
+			
+		}else if ( filter.startsWith( "f:" ) || filter.startsWith( "p:" )){
 
 			filter = filter.substring( 2 );
 
@@ -828,10 +873,20 @@ public class SBC_DownloadHistoryView
 
 		}else{
 
-			o_name = ds.getName();
+			String default_text = ds.getName();
 
+			if ( confusable ){
+				
+				default_text = GeneralUtils.getConfusableEquivalent( default_text, false );
+			}
+			
+			boolean res = col_filter_helper.filterCheck( ds, filter, regex, default_text, false );
+			
+			return( res );
 		}
 
+			// could replace below with col_filter_helper and some hacks sometime...
+		
 		boolean	match_result = true;
 
 		String expr;

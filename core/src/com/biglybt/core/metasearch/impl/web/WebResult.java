@@ -55,13 +55,16 @@ public class WebResult extends Result {
 	Date assetDate;
 	
 	long size = -1;
-	int nbPeers = -1;
-	int nbSeeds = -1;
-	int nbSuperSeeds = -1;
+	
+	int nbPeers			= -1;
+	int nbSeeds			= -1;
+	int nbSuperSeeds	= -1;
+	int nbCompleted		= -1;
+	
 	int	comments	= -1;
-	int votes = -1;
-	int votesDown = -1;
-	float rank = -1;
+	int votes		= -1;
+	int votesDown	= -1;
+	float rank		= -1;
 
 	boolean privateTorrent;
 
@@ -106,6 +109,13 @@ public class WebResult extends Result {
 				//e.printStackTrace();
 			}
 		}
+	}
+	
+	@Override
+	public String 
+	getDescription()
+	{
+		return( null );
 	}
 	
 	public void setCategoryFromHTML(String category) {
@@ -205,6 +215,9 @@ public class WebResult extends Result {
 		}
 	}
 
+	public void setNbCompleted( int num ){
+		nbCompleted = num;
+	}
 	public void setRankFromHTML( String rank_str, float divisor ){
 		if (rank_str == null) {
 			return;
@@ -289,7 +302,7 @@ public class WebResult extends Result {
 		assetDate = RSSUtils.parseRSSDate( str );
 	}
 
-	public void setSizeFromHTML(String size) {
+	public void setSizeFromHTML(String size, long minAcceptable) {
 		if(size != null) {
 			size = removeHTMLTags(size);
 			String sizeS = Entities.HTML40.unescape(size).replace((char)160,(char)32);
@@ -312,7 +325,10 @@ public class WebResult extends Result {
 				if ( multiplier <= 0 ){
 					multiplier= 1;	// ignore invalid 
 				}
-				this.size = (long) (base * multiplier );
+				long result = (long) (base * multiplier );
+				if ( result >= minAcceptable ){
+					this.size = result;
+				}
 			} catch(Throwable e) {
 				//e.printStackTrace();
 			}
@@ -558,6 +574,11 @@ public class WebResult extends Result {
 		return nbSuperSeeds;
 	}
 
+	@Override
+	public int getNbCompleted(){
+		return( nbCompleted );
+	}
+	
 	@Override
 	public Date getPublishedDate() {
 		return publishedDate;

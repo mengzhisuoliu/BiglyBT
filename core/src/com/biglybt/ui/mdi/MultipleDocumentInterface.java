@@ -21,7 +21,6 @@ package com.biglybt.ui.mdi;
 import java.util.List;
 import java.util.Map;
 
-import com.biglybt.core.download.DownloadManager;
 import com.biglybt.ui.common.viewtitleinfo.ViewTitleInfo;
 
 public interface MultipleDocumentInterface
@@ -154,8 +153,10 @@ public interface MultipleDocumentInterface
 			String configID, String title, ViewTitleInfo titleInfo, Object params,
 			boolean closeable, String preferedAfterID);
 
-	public MdiEntry getCurrentEntry();
+	public MdiEntry getSelectedEntry();
 
+	public MdiEntry getMenuEntry( boolean activeOnly);
+	
 	public MdiEntry getEntry(String id);
 
 	public MdiEntry getEntry(String id, Object datasource );

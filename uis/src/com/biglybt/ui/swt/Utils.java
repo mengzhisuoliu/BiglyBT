@@ -58,6 +58,9 @@ import org.eclipse.swt.widgets.*;
 
 import com.biglybt.core.Core;
 import com.biglybt.core.CoreFactory;
+import com.biglybt.core.CoreOperation;
+import com.biglybt.core.CoreOperationTask;
+import com.biglybt.core.CoreOperationTask.ProgressCallback;
 import com.biglybt.core.config.COConfigurationManager;
 import com.biglybt.core.config.ParameterListener;
 import com.biglybt.core.disk.DiskManagerFileInfo;
@@ -69,6 +72,7 @@ import com.biglybt.core.logging.LogIDs;
 import com.biglybt.core.logging.Logger;
 import com.biglybt.core.speedmanager.SpeedLimitHandler;
 import com.biglybt.core.torrent.PlatformTorrentUtils;
+import com.biglybt.core.torrent.impl.TorrentOpenFileOptions;
 import com.biglybt.core.util.*;
 import com.biglybt.pifimpl.local.PluginCoreUtils;
 import com.biglybt.platform.PlatformManager;
@@ -78,6 +82,7 @@ import com.biglybt.plugin.I2PHelpers;
 import com.biglybt.ui.UIFunctions;
 import com.biglybt.ui.UIFunctionsManager;
 import com.biglybt.ui.UIFunctionsUserPrompter;
+import com.biglybt.ui.common.table.impl.TableColumnManager;
 import com.biglybt.ui.swt.components.BufferedTruncatedLabel;
 import com.biglybt.ui.swt.imageloader.ImageLoader;
 import com.biglybt.ui.swt.mainwindow.ClipboardCopy;
@@ -98,6 +103,8 @@ import com.biglybt.pif.disk.DiskManagerListener;
 import com.biglybt.pif.platform.PlatformManagerException;
 import com.biglybt.pif.sharing.ShareManager;
 import com.biglybt.pif.ui.Graphic;
+import com.biglybt.pif.ui.UIInputReceiver;
+import com.biglybt.pif.ui.UIInputReceiverListener;
 import com.biglybt.pif.utils.PooledByteBuffer;
 
 /**
@@ -149,9 +156,9 @@ public class Utils
 	public static final int SCT_MENU_ITEM			= 2;
 	
 	/**
-	 * Debug/Diagnose SWT exec calls.  Provides usefull information like how
+	 * Debug/Diagnose SWT exec calls.  Provides useful information like how
 	 * many we are queuing up, and how long each call takes.  Good to turn on
-	 * occassionally to see if we coded something stupid.
+	 * occasionally to see if we coded something stupid.
 	 */
 	private static final boolean DEBUG_SWTEXEC = System.getProperty(
 			"debug.swtexec", "0").equals("1");
@@ -213,8 +220,13 @@ public class Utils
 	private static Skinner	skinner;
 	private static int		skinning_enabled = 1;
 	
-	private static volatile boolean	dark_misc_things = false;
-	private static volatile boolean	gradient_fill	 = true;
+	private static volatile boolean	dark_misc_things 		= false;
+	private static volatile boolean	gradient_fill	 		= true;
+	
+	
+	private static volatile boolean	gui_refresh_disable_when_min	= false;
+	private static volatile boolean	gui_is_minimized				= false;
+	private static volatile boolean gui_refresh_enable				= true;
 	
 	private static String SHELL_METRICS_DISABLED_KEY = "utils:shmd";
 	
@@ -277,8 +289,11 @@ public class Utils
 		configOtherListener = new ParameterListener() {
 			@Override
 			public void parameterChanged(String parameterName) {
-				dark_misc_things	= COConfigurationManager.getBooleanParameter( "Dark Misc Colors" );
-				gradient_fill		= COConfigurationManager.getBooleanParameter( "Gradient Fill Selection" );
+				dark_misc_things				= COConfigurationManager.getBooleanParameter( "Dark Misc Colors" );
+				gradient_fill					= COConfigurationManager.getBooleanParameter( "Gradient Fill Selection" );
+				gui_refresh_disable_when_min	= COConfigurationManager.getBooleanParameter( "GUI Refresh Disable When Minimized" );
+				
+				gui_refresh_enable = !( gui_is_minimized && gui_refresh_disable_when_min );
 			}
 		};
 		
@@ -286,6 +301,7 @@ public class Utils
 				new String[]{
 					"Dark Misc Colors",
 					"Gradient Fill Selection",
+					"GUI Refresh Disable When Minimized",
 				},
 				configOtherListener );
 	}
@@ -297,6 +313,8 @@ public class Utils
 
 	private static volatile int dragDetectMask	= 0;
 	
+	private static CopyOnWriteList<TerminateListener>	listeners = new CopyOnWriteList<>();
+
 	public static void
 	initialize(
 		Display		_display )
@@ -556,9 +574,23 @@ public class Utils
 	{
 		if ( force ){
 			
-			control.setData( "utils:skinned-fg-forced", true );
+			if ( color == null ){
+				
+					// remove force
+				
+				control.setData( "utils:skinned-fg-forced", null );
+				
+				Color def = (Color)control.getData( "utils:skinned-fg" );
+								
+				control.setForeground( def );
+
+			}else{
 			
-			control.setForeground( color );
+				control.setData( "utils:skinned-fg-forced", true );
+				
+				control.setForeground( color );
+			}
+						
 		}else{
 			
 			Color def = (Color)control.getData( "utils:skinned-fg" );
@@ -571,6 +603,29 @@ public class Utils
 				
 				control.setForeground( color );
 			}
+		}
+	}
+	
+	public static Color
+	getSkinnedForeground(
+		Control		c )
+	{
+		if ( skinner != null ){
+			
+			Color bg = c.getForeground();
+			
+			c.setForeground( null );
+			
+			skinner.handleSkinning(c);
+			
+			Color skinned = c.getForeground();
+			
+			c.setForeground( bg );
+			
+			return ( skinned );
+		}else{
+			
+			return( c.getForeground());
 		}
 	}
 	
@@ -619,11 +674,23 @@ public class Utils
 		boolean		force )
 	{
 		if ( force ){
+						
+			if ( color == null ){
+				
+					// remove force
+				
+				control.setData( "utils:skinned-bg-forced", null );
+				
+				Color def = (Color)control.getData( "utils:skinned-bg" );
+								
+				control.setBackground( def );
+	
+			}else{
 			
-			control.setData( "utils:skinned-bg-forced", true );
-			
-			control.setBackground( color );
-			
+				control.setData( "utils:skinned-bg-forced", true );
+				
+				control.setBackground( color );
+			}			
 		}else{
 			
 			Color def = (Color)control.getData( "utils:skinned-bg" );
@@ -888,9 +955,42 @@ public class Utils
 	}
 	
 	public static void
+	setUIVisible(
+		boolean	visible )
+	{
+		gui_is_minimized = !visible;
+		
+		gui_refresh_enable = !( gui_is_minimized && gui_refresh_disable_when_min );
+	}
+	
+	public static boolean
+	isUIUpdateEnabled()
+	{
+		return( gui_refresh_enable );
+	}
+	
+	public static void
+	addTerminateListener(
+		TerminateListener		l )
+	{
+		listeners.add( l );
+	}
+	
+	public static void
 	setTerminated()
 	{
 		terminated	= true;
+		
+		for ( TerminateListener l: listeners ){
+			
+			try{
+				l.terminated();
+				
+			}catch( Throwable e ){
+				
+				Debug.out( e );
+			}
+		}
 	}
 
 	public static boolean
@@ -987,15 +1087,25 @@ public class Utils
 		if (disposeList == null) {
 			return;
 		}
-		for (int i = 0; i < disposeList.length; i++) {
-			try {
-  			Object o = disposeList[i];
-  			if (o instanceof Widget && !((Widget) o).isDisposed())
-  				((Widget) o).dispose();
-  			else if ((o instanceof Resource) && !((Resource) o).isDisposed()) {
-  				((Resource) o).dispose();
-  			}
-			} catch (Exception e) {
+		for ( Object o: disposeList ){
+			if ( o == null ){
+				continue;
+			}
+			try{
+				if (o instanceof Widget){
+					Widget w = (Widget)o;
+					if ( !w.isDisposed()){
+						w.dispose();
+					}
+				}else if ( o instanceof Resource){
+					Resource r = (Resource)o;
+					if ( !r.isDisposed()){
+						r.dispose();
+					}
+				}else{
+					Debug.out( "No dispose action for " + o.getClass());
+				}
+			}catch (Exception e) {
 				Debug.out("Warning: Disposal failed "
 						+ Debug.getCompressedStackTrace(e, 0, -1, true));
 			}
@@ -1759,7 +1869,7 @@ public class Utils
 	 * @param msLater time to wait before running code on SWT thread.  0 does not
 	 *                mean immediate, but as soon as possible.
 	 * @param code Code to run
-	 * @return sucess
+	 * @return success
 	 *
 	 * @since 3.0.4.3
 	 */
@@ -1778,7 +1888,7 @@ public class Utils
 		return( display.getThread() == Thread.currentThread());
 	}
 
-	/** For Debugging only: uncomment and chec
+	/** For Debugging only: uncomment and check
 	 * {@link #execSWTThread(Runnable, int)} for callers
 	 *
 	 public static boolean execSWTThreadLater(int msLater, final SWTRunnable code) {
@@ -2226,44 +2336,9 @@ public class Utils
 
 			if ( exe != null ){
 
-				File	file = new File( sFileModified );
-
-				try{
-					System.out.println( "Launching " + sFileModified + " with " + exe );
-
-					if ( Constants.isWindows ){
-
-							// need to use createProcess as we want to force the process to decouple correctly (otherwise Vuze won't close until the child closes)
-
-						try{
-							PlatformManagerFactory.getPlatformManager().createProcess( exe + " \"" + sFileModified + "\"", false );
-
-							return;
-
-						}catch( Throwable e ){
-						}
-					} else if (Constants.isOSX && exe.endsWith(".app")) {
-						ProcessBuilder pb = GeneralUtils.createProcessBuilder(
-								file.getParentFile(), new String[] {
-										"open",
-										"-a",
-									exe,
-									file.getName()
-								}, null);
-						pb.start();
-						return;
-					}
-
-					ProcessBuilder pb = GeneralUtils.createProcessBuilder( file.getParentFile(), new String[]{ exe, file.getName()}, null );
-
-					pb.start();
-
-					return;
-
-				}catch( Throwable e ){
-
-					Debug.out( "Launch failed", e );
-				}
+				launchFileExplicit( sFileModified, exe );
+				
+				return;
 			}
 		}
 
@@ -2451,6 +2526,83 @@ public class Utils
 		}
 	}
 
+	public static void
+	launchFileExplicit(
+		DiskManagerFileInfo		file,
+		String					exe )
+	{
+		launchFileExplicit( file.getFile(true).toString(), exe );
+	}
+	
+	public static void
+	launchFileExplicit(
+		String		sfile,
+		String...	cmd_args )
+	{
+		File	file = new File( sfile );
+
+		try{
+			String cmd = "";
+			
+			for ( String ca: cmd_args ){
+				
+				cmd += (cmd.isEmpty()?"":" ") + ca;	// should do something about spaces in ca someday
+			}
+			
+			System.out.println( "Launching " + sfile + " with " + cmd );
+
+			if ( Constants.isWindows ){
+
+					// handle fact that "explorer.exe /select," doesn't require a space :(
+				
+				if ( !cmd.endsWith( "," )){
+					
+					cmd += " ";
+				}
+				
+				try{
+					// need to use createProcess as we want to force the process to decouple correctly (otherwise Vuze won't close until the child closes)
+
+					PlatformManagerFactory.getPlatformManager().createProcess( cmd + "\"" + sfile + "\"", false );
+
+					return;
+
+				}catch( Throwable e ){
+				}
+			} else if (Constants.isOSX && cmd.endsWith(".app")) {
+				
+				ProcessBuilder pb = GeneralUtils.createProcessBuilder(
+						file.getParentFile(), 
+						new String[] {
+							"open",
+							"-a",
+							cmd,
+							file.getName()
+						}, null);
+				
+				pb.start();
+				
+				return;
+			}
+
+			String[] args = new String[cmd_args.length+1];
+		
+			System.arraycopy(cmd_args,0,args,0,cmd_args.length);
+			
+			args[args.length-1] = file.getName();
+			
+			ProcessBuilder pb = GeneralUtils.createProcessBuilder( file.getParentFile(), args, null );
+
+			pb.start();
+
+			return;
+
+		}catch( Throwable e ){
+
+			Debug.out( "Launch failed", e );
+		}
+	}
+	
 	private static boolean fallbackLaunch(String command, String... args) {
 		try {
 			List<String> cmdList = new ArrayList<>();
@@ -2860,10 +3012,10 @@ public class Utils
 				ext = ext.substring( 0, q_pos );
 			}
 
-			for ( int i=0;i<10;i++){
+			for ( int i=0;i<ConfigKeysSWT.getLaunchHelperEntryCount();i++){
 
-				String exts = COConfigurationManager.getStringParameter( "Table.lh" + i + ".exts", "" ).trim();
-				String exe 	= COConfigurationManager.getStringParameter( "Table.lh" + i + ".prog", "" ).trim();
+				String exts = ConfigKeysSWT.getLaunchHelpersExts(i).trim();
+				String exe 	= ConfigKeysSWT.getLaunchHelpersProg(i).trim();
 
 				if ( exts.length() > 0 && exe.length() > 0 && new File( exe ).exists()){
 
@@ -2886,6 +3038,37 @@ public class Utils
 		return( null );
 	}
 
+	public static final String PL_SHOW_FILE = "<showfile>";
+	
+	public static String
+	getPredefinedExplicitLauncher(
+		String	type )
+	{
+		for ( int i=0;i<ConfigKeysSWT.getLaunchHelperEntryCount();i++){
+
+			String exts = ConfigKeysSWT.getLaunchHelpersExts(i).trim();
+			String exe 	= ConfigKeysSWT.getLaunchHelpersProg(i).trim();
+
+			if ( exts.length() > 0 && exe.length() > 0 ){
+
+				exts = "," + exts.toLowerCase();
+
+				exts = exts.replaceAll( "\\.", "," );
+				exts = exts.replaceAll( ";", "," );
+				exts = exts.replaceAll( " ", "," );
+
+				exts = exts.replaceAll( "[,]+", "," );
+
+				if ( exts.contains( type )){
+
+					return( exe );
+				}
+			}
+		}
+
+		return( null );
+	}
+	
 	/**
 	 * Sets the checkbox in a Virtual Table while inside a SWT.SetData listener
 	 * trigger.  SWT 3.1 has an OSX bug that needs working around.
@@ -3231,7 +3414,7 @@ public class Utils
 				
 				try{
 					// weirdly any of these options cause transparency issues on Windows, the same as those
-					// encounted by the AWT resize method!
+					// encountered by the AWT resize method!
 					
 					//tempGC.setAdvanced( true );		
 					//tempGC.setAntialias(SWT.ON);
@@ -3926,7 +4109,7 @@ public class Utils
 	public static GridData getWrappableLabelGridData(int hspan, int styles) {
 		GridData gridData = new GridData(GridData.HORIZONTAL_ALIGN_FILL | styles);
 		gridData.horizontalSpan = hspan;
-		gridData.widthHint = 0;
+		gridData.widthHint = 0;	// not sure about this, causes some controls to be invisible...
 		return gridData;
 	}
 
@@ -4554,7 +4737,80 @@ public class Utils
 		return false;
 	}
 
-
+	public static void
+	runWhenCoreOperationsIdle(
+		Core		core,
+		Runnable 	r )
+	{
+		  getOffOfSWTThread(()->{
+			  
+			  try{
+				  long start = SystemTime.getMonotonousTime();
+				  
+				  boolean waiting = true;
+						  
+				  while( waiting && ( SystemTime.getMonotonousTime() - start <= 60*1000 )){			  
+					  
+					  waiting = false;
+					
+					  List<CoreOperation> ops = core.getOperations();
+		
+					  for ( CoreOperation op: ops ){
+			
+						  if ( op.isRemoved()){
+			
+							  continue;
+						  }
+			
+						  int type = op.getOperationType();
+			
+						  if (	type == CoreOperation.OP_DOWNLOAD_CHECKING ||
+								type == CoreOperation.OP_DOWNLOAD_COPY ||
+								type == CoreOperation.OP_DOWNLOAD_EXPORT ||
+								type == CoreOperation.OP_FILE_MOVE ){
+			
+							  CoreOperationTask task = op.getTask();
+			
+							  if ( task != null ){
+			
+								  ProgressCallback cb = task.getProgressCallback();
+			
+								  if ( cb != null ){
+			
+									  int state = cb.getTaskState();
+			
+									  if ( state == ProgressCallback.ST_CANCEL ){
+			
+										  continue;
+									  }
+								  }
+							  }
+							  
+							  waiting = true;
+							  
+							  break;
+						  }
+					  }
+					  
+					  if ( waiting ){
+						  
+						  try{
+							  Thread.sleep(250);
+							  
+						  }catch( Throwable e ){
+						  }
+					  }
+				  }
+			  
+			  }catch( Throwable e ){
+				  
+				  Debug.out( e );
+			  }
+			  
+			  r.run();
+		  });
+	}
+	
 	public static BrowserWrapper
 	createSafeBrowser(
 		Composite parent, int style)
@@ -4569,7 +4825,7 @@ public class Utils
   					 * Intent here seems to be to run all pending events through the queue to ensure
   					 * that the 'setUrl' and 'setVisible' actions are complete before disposal in an
   					 * attempt to ensure memory released. This is old code and the new 4508 SWT introduced
-  					 * in Dec 2014 causes the 'readAndDispatch' loop to bever exit.
+  					 * in Dec 2014 causes the 'readAndDispatch' loop to never exit.
   					 * So added code to queue an async event and hope that by the time this runs
   					 * any housekeeping is complete
   					 * Meh, tested and the injected code doesn't run until, say, you move the window containing
@@ -5668,6 +5924,9 @@ public class Utils
 
 	public static void relayoutUp(Composite c) {
 		while (c != null && !c.isDisposed()) {
+			if ( c instanceof ScrolledComposite ){
+				updateScrolledComposite((ScrolledComposite)c, c.getStyle());
+			}
 			Composite newParent = c.getParent();
 			if (newParent == null) {
 				break;
@@ -5796,6 +6055,11 @@ public class Utils
 
 			if (req_h >= 0) {
 
+				if ( Utils.isDarkAppearanceNativeWindows()){
+										
+					req_h -= 2;	// getting truncation in Windows Dark theme for some reason
+				}
+				
 				sc_size.y = req_h;
 			}
 
@@ -5807,7 +6071,7 @@ public class Utils
 			}
 		});
 
-		Utils.execSWTThreadLater(1000, () -> new Runnable() {
+		Utils.execSWTThreadLater(1000, new Runnable() {
 			public void run() {
 				hack.run();
 
@@ -6153,7 +6417,8 @@ public class Utils
 		COConfigurationManager.removeParameterListeners(
 				new String[]{
 					"Dark Misc Colors",
-					"Gradient Fill Selection" },
+					"Gradient Fill Selection",
+					"GUI Refresh Disable When Minimized" },
 				configOtherListener);
 	}
 	
@@ -6162,25 +6427,16 @@ public class Utils
 		String		base,
 		String		sub )
 	{
-		return( base + "::" + sub );
+		return( TableColumnManager.createSubViewID(base,sub));
 	}
 	
 	public static String
 	getBaseViewID(
 		String		id )
 	{
-		int	pos = id.lastIndexOf( "::" );
-		
-		if ( pos == -1 ){
-			
-			return( id );
-			
-		}else{
-			
-			return( id.substring( 0, pos ));
-		}
+		return( TableColumnManager.getBaseViewID(id));
 	}
-		
+	
 	public static boolean
 	isDarkAppearanceNativeWindows()
 	{
@@ -6928,19 +7184,190 @@ public class Utils
 		}
 	}
 	
+	private static AtomicInteger dl_depth = new AtomicInteger();
+	
+	public static int
+	getDispatchLoopDepth()
+	{
+		return( dl_depth.get());
+	}
+	
 	public static boolean
 	readAndDispatchLoop(
 		Supplier<Boolean>	done )
 	{
-		while ( !SWTThread.getInstance().isTerminated() && 
-				!( done.get() || display.isDisposed())){
-
-			if ( !display.readAndDispatch()){
-
-				display.sleep();
+		try{
+			dl_depth.incrementAndGet();
+			
+			while ( !SWTThread.getInstance().isTerminated() && 
+					!( done.get() || display.isDisposed())){
+	
+				if ( !display.readAndDispatch()){
+	
+					display.sleep();
+				}
 			}
+	
+			return( display.isDisposed());
+			
+		}finally{
+			
+			dl_depth.decrementAndGet();
 		}
+	}
+	
 
-		return( display.isDisposed());
+	public interface
+	TerminateListener
+	{
+		public void
+		terminated();
+	}
+	
+	public static void
+	setFilterPathWithTimeout(
+		FileDialog	dialog,
+		String		path )
+	{
+		try{
+			if ( path != null ){
+			
+				path = FileUtil.getCanonicalPathWithTimeout( FileUtil.newFile( path ), 20*1000 );
+			}
+			
+			dialog.setFilterPath( path );
+			
+		}catch( Throwable e ){
+			
+			Debug.out( "Failed to set filter path '" + path + "'" );
+		}
+	}
+	
+	public static void
+	setFilterPathWithTimeout(
+		DirectoryDialog	dialog,
+		String			path )
+	{
+		try{
+			if ( path != null ){
+			
+				path = FileUtil.getCanonicalPathWithTimeout( FileUtil.newFile( path ), 20*1000 );
+			}
+			
+			dialog.setFilterPath( path );
+			
+		}catch( Throwable e ){
+			
+			Debug.out( "Failed to set filter path '" + path + "'" );
+		}
+	}
+	
+	public static boolean
+	isFileResponding(
+		File		file )
+	{
+		return( FileUtil.isResponding(file, 250 ));
+	}
+	
+	public static boolean
+	fileExistsWithTimeout(
+		String		path )
+	{
+		return( fileExistsWithTimeout( new File( path )));
+	}
+	
+	public static boolean
+	fileExistsWithTimeout(
+		File		file )
+	{
+		return( FileUtil.existsWithTimeout( file, 250 ));
+	}
+	
+	public static boolean
+	isDirectoryWithTimeout(
+		File		dir )
+	{
+		return( FileUtil.isDirectoryWithTimeout( dir, 250 ));
+	}
+	
+	public static boolean
+	canReadFileWithTimeout(
+		File		dir )
+	{
+		return( FileUtil.canReadWithTimeout( dir, 250 ));
+	}
+	
+	public static long
+	fileLengthWithTimeout(
+		File		file )
+	{
+		return( FileUtil.lengthWithTimeout( file, 250 ));
+	}
+	
+	public static String
+	getCanonicalPathWithTimeout(
+		File		file )
+	
+		throws IOException
+	{
+		return( FileUtil.getCanonicalPathWithTimeout( file, 250 ));
+	}
+	
+	public static File[]
+	listFileRootsWithTimeout()
+	{
+		return( FileUtil.listRootsWithTimeout( 250 ));
+	}
+	
+	public static void
+	numberPrompt(
+		String				title_resource,
+		String				text_resource,
+		Integer				def,
+		Consumer<Integer>	cons )
+	{
+		SimpleTextEntryWindow entryWindow = new SimpleTextEntryWindow( title_resource, text_resource );
+				
+		if ( def != null ){
+			
+			entryWindow.setPreenteredText( String.valueOf( def ), false );
+			entryWindow.selectPreenteredText( true );
+		}
+		
+		entryWindow.prompt(
+			new UIInputReceiverListener() {
+				@Override
+				public void 
+				UIInputReceiverClosed(
+					UIInputReceiver entryWindow ) 
+				{
+					if (!entryWindow.hasSubmittedInput()){
+						
+						return;
+					}
+					
+					String sReturn = entryWindow.getSubmittedInput();
+
+					if ( sReturn == null ){
+						
+						return;
+					}
+					
+					try{
+						int num = Integer.valueOf(sReturn).intValue();
+						
+						cons.accept( num );
+						
+					}catch ( Throwable e ){
+
+						new MessageBoxShell(SWT.ICON_ERROR | SWT.OK,
+								MessageText.getString("value.invalid.title"),
+								MessageText.getString("value.invalid.text", new String[]{ sReturn })).open(
+										(n)->{
+											Utils.execSWTThreadLater(1,()->numberPrompt(title_resource,text_resource, def, cons ));
+										});
+					}
+				}
+			});
 	}
 }

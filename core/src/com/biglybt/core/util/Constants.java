@@ -122,7 +122,7 @@ Constants
 	public static final long   CRAPPY_INFINITE_AS_LONG = 10000*365*24*3600; // seconds (10k years)
 
 	/**
-	 *  Can't be final as accesed from client speed measurer plugin
+	 *  Can't be final as accessed from client speed measurer plugin
 	 *  27/04/2022 dead plugin, remove this sometime
 	 */
 
@@ -145,11 +145,11 @@ Constants
 	public static final String BIGLY_PEER_ID						= "BI";
 
 	
-	public static final String BIGLYBT_VERSION  = "3.3.0.1_B22";
+	public static final String BIGLYBT_VERSION  = "3.7.0.1_B03";
 	
 	//public static final String BUILD_VERSION  = "@build.version@";   //Ant replace - believed dead
 	public static final String SUBVERSION		= "";
-	public static final byte[] VERSION_ID       = ("-" + BIGLY_PEER_ID + "3301" + "-").getBytes();  //MUST be 8 chars long!
+	public static final byte[] VERSION_ID       = ("-" + BIGLY_PEER_ID + "3701" + "-").getBytes();  //MUST be 8 chars long!
 
 	private static final boolean FORCE_NON_CVS = System.getProperty( "az.force.noncvs", "0" ).equals( "1" );
 

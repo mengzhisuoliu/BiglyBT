@@ -71,7 +71,7 @@ import com.biglybt.pif.ui.config.Parameter;
 public class ConfigView implements UISWTViewCoreEventListener, ConfigSectionRepository.ConfigSectionRepositoryListener {
 	private static final LogIDs LOGID = LogIDs.GUI;
 
-	// For highligting via showSeection.  option map contains "select" key with "value".
+	// For highlighting via showSeection.  option map contains "select" key with "value".
 	// (multiple) config widgets can setData(SELECT_KEY, "value"), which means they will be
 	// highlighted
 	public static final String SELECT_KEY	= "ConfigView.select_key";
@@ -86,13 +86,24 @@ public class ConfigView implements UISWTViewCoreEventListener, ConfigSectionRepo
 	getSectionContext(
 			Control	c )
 	{
+		String groups = "";
+		
 		while( c != null ){
 
+			if ( c instanceof Group ){
+				
+				String text = ((Group)c).getText().trim();
+				
+				if ( !text.isEmpty()){
+					
+					groups = " [" + text + groups +  "]";
+				}
+			}
 			TreeItem item = (TreeItem)c.getData( TREEITEMDATA_ITEM );
 
 			if ( item != null ){
 
-				String	str = "";
+				String	str = groups;
 				
 				while( item != null ){
 					
@@ -139,7 +150,7 @@ public class ConfigView implements UISWTViewCoreEventListener, ConfigSectionRepo
   }
 
   private void initialize(final Composite composite) {
-  	// need to initalize composite now, since getComposite can
+  	// need to initialize composite now, since getComposite can
   	// be called at any time
     cConfig = new Composite(composite, SWT.NONE);
 
@@ -644,15 +655,20 @@ public class ConfigView implements UISWTViewCoreEventListener, ConfigSectionRepo
 				try {
 					ArrayList<TreeItem> foundItems = new ArrayList<>();
 					TreeItem[] items = tree.getItems();
-					try {
-						tree.setRedraw(false);
-						for (TreeItem item : items) {
-							item.setExpanded(false);
+					try{
+						cConfig.setLayoutDeferred( true );
+						try {
+							tree.setRedraw(false);
+							for (TreeItem item : items) {
+								item.setExpanded(false);
+							}
+	
+							filterTree(items, filterText, foundItems);
+						} finally {
+							tree.setRedraw(true);
 						}
-
-						filterTree(items, filterText, foundItems);
-					} finally {
-						tree.setRedraw(true);
+					}finally{
+						cConfig.setLayoutDeferred(false);
 					}
 				} finally {
 					if (shell != null) {

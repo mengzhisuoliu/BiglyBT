@@ -197,6 +197,7 @@ public class MainMenuV3
 		if (!Constants.isOSX) {
 			MenuFactory.addSeparatorMenuItem(fileMenu);
 			MenuFactory.addCloseWindowMenuItem(fileMenu);
+			MenuFactory.addCloseCurrentViewMenuItem(fileMenu);
 			MenuFactory.addCloseDetailsMenuItem(fileMenu);
 			MenuFactory.addCloseDownloadBarsToMenu(fileMenu);
 		}
@@ -476,7 +477,7 @@ public class MainMenuV3
 					}
 					String tableID = tv.getTableID();
 					new TableColumnSetupWindow(tv.getDataSourceType(), tableID, null, focusedRow,
-							TableStructureEventDispatcher.getInstance(tableID)).open();
+							TableStructureEventDispatcher.getInstance(tableID), false );
 				}
 			});
 			
@@ -633,6 +634,7 @@ public class MainMenuV3
 
 		MenuFactory.addSeparatorMenuItem(windowMenu);
 		MenuFactory.addBringAllToFrontMenuItem(windowMenu);
+		MenuFactory.addCloseCurrentViewMenuItem(windowMenu);
 		MenuFactory.addCloseDetailsMenuItem(windowMenu);
 		MenuFactory.addCloseDownloadBarsToMenu(windowMenu);
 

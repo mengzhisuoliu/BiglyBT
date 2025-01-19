@@ -151,13 +151,35 @@ RankCalculatorReal
 	private static boolean bAutoStart0Peers;
 
 	private static int iTimed_MinSeedingTimeWithPeers;
-
+	private static int iTimed_MaxSeedingTimeWithPeers;
+	
 	// count x peers as a full copy, but..
 	private static int numPeersAsFullCopy;
 
 	// don't count x peers as a full copy if seeds below
 	private static int iFakeFullCopySeedStart;
 
+	private static void
+	checkConfigListener(
+		PluginConfig		config )
+	{
+		synchronized( RankCalculatorReal.class ){
+
+			if (configListener == null) {
+
+				configListener = new COConfigurationListener() {
+					@Override
+					public void configurationSaved() {
+						reloadConfigParams(config);
+					}
+				};
+
+				COConfigurationManager.addListener(configListener);
+				configListener.configurationSaved();
+			}
+		}
+	}
+	
 	//
 	// Class variables
 
@@ -214,6 +236,9 @@ RankCalculatorReal
 	private RankCalculatorSlotReserver	reservedSlot;
 	private long	lastActivationAnnounce;
 	
+	private long timedRotationSeedingStart;
+	private long timedRotationSeedingStartMinSeeding;
+	
 	private Map<Object,Object> userData;
 
 	/**
@@ -262,24 +287,7 @@ RankCalculatorReal
 				
 		setupTagData();
 		
-		try {
-			downloadData_this_mon.enter();
-
-			if (configListener == null) {
-
-				configListener = new COConfigurationListener() {
-					@Override
-					public void configurationSaved() {
-						reloadConfigParams(rules.plugin_config);
-					}
-				};
-
-				COConfigurationManager.addListener(configListener);
-				configListener.configurationSaved();
-			}
-		} finally {
-			downloadData_this_mon.exit();
-		}
+		checkConfigListener( rules.plugin_config );
 	}
 
 	@Override
@@ -346,6 +354,7 @@ RankCalculatorReal
 		iFirstPriorityIgnoreIdleMinutes = cfg.getUnsafeIntParameter("StartStopManager_iFirstPriority_ignoreIdleMinutes");
 		
 		iTimed_MinSeedingTimeWithPeers = cfg.getUnsafeIntParameter("StartStopManager_iTimed_MinSeedingTimeWithPeers") * 1000;
+		iTimed_MaxSeedingTimeWithPeers = cfg.getUnsafeIntParameter("StartStopManager_iTimed_MaxSeedingTimeWithPeers") * 1000;
 	}
 
 	/** Sort first by SeedingRank Descending, then by Position Ascending.
@@ -1264,16 +1273,71 @@ RankCalculatorReal
 					long lMsElapsed = 0;
 					long lMsTimeToSeedFor = minTimeAlive;
 					if (state == Download.ST_SEEDING && !dl.isForceStart()) {
-						lMsElapsed = (SystemTime.getCurrentTime() - stats
-								.getTimeStartedSeeding());
+						long seedingStart = stats.getTimeStartedSeeding();
+						lMsElapsed = (SystemTime.getCurrentTime() - seedingStart );
 						if (iTimed_MinSeedingTimeWithPeers > 0) {
-	  					PeerManager peerManager = dl.getPeerManager();
-	  					if (peerManager != null) {
-	  						int connectedLeechers = peerManager.getStats().getConnectedLeechers();
-	  						if (connectedLeechers > 0) {
-	  							lMsTimeToSeedFor = iTimed_MinSeedingTimeWithPeers;
-	  						}
-	  					}
+							
+								// THIS IS ALL IN TWO PLACES HERE
+							
+		  					PeerManager peerManager = dl.getPeerManager();
+		  					if (peerManager != null) {
+		  						int connectedLeechers = peerManager.getStats().getConnectedLeechers();
+		  						if (connectedLeechers > 0) {
+		  							lMsTimeToSeedFor = iTimed_MinSeedingTimeWithPeers;
+		  							
+		  							String trDebug = null;
+		  							
+		  							if (rules.bDebugLog){
+		  								trDebug = "  Timed Rotation: connected peers, min seeding set to " + (lMsTimeToSeedFor/1000);
+		  							}
+		  							
+		  							if ( iTimed_MaxSeedingTimeWithPeers > iTimed_MinSeedingTimeWithPeers && lastModifiedScrapeResultPeers > 0 ){
+		  							
+		  								if ( lastModifiedScrapeResultSeeds == 0 ){
+		  									
+		  									lMsTimeToSeedFor = iTimed_MaxSeedingTimeWithPeers;
+		  									
+		  									if (rules.bDebugLog){
+				  								trDebug = "  Timed Rotation: connected peers, max seeding set and no seeds, min seeding set to " + (lMsTimeToSeedFor/1000);
+				  							}
+		  								}else{
+		  									
+		  									float psRatio = (float)lastModifiedScrapeResultPeers/lastModifiedScrapeResultSeeds;
+		  										
+		  									long diff = iTimed_MaxSeedingTimeWithPeers -  iTimed_MinSeedingTimeWithPeers;
+		  									
+		  									lMsTimeToSeedFor += diff - ( diff / ( 1.0 + psRatio ));
+		  										
+		  									if (rules.bDebugLog){
+					  							trDebug = "  Timed Rotation: connected peers, max seeding set and SP ratio of " + psRatio + ", min seeding set to " + (lMsTimeToSeedFor/1000);
+		  									}
+		  								}
+		  							}
+		  							
+		  								// to preventing jumping around we only increase the seeding period
+		  							
+		  							if ( timedRotationSeedingStart == seedingStart ){
+		  							
+		  								long max = Math.max( lMsTimeToSeedFor, timedRotationSeedingStartMinSeeding );
+		  								
+		  								if ( max > lMsTimeToSeedFor ){
+		  									
+		  									trDebug += "; updated to existing max of " + ( max/1000);
+		  								}
+		  								
+		  								lMsTimeToSeedFor = max; 
+		  							}else{
+		  								
+		  								timedRotationSeedingStart = seedingStart;
+		  							}
+		  							
+		  							timedRotationSeedingStartMinSeeding = lMsTimeToSeedFor;
+		  							
+		  							if (rules.bDebugLog){
+		  								sExplainSR += trDebug + "\n";
+		  							}
+		  						}
+		  					}
 						}
 					}
 	
@@ -1456,7 +1520,9 @@ RankCalculatorReal
 	
 			DownloadManagerState dm_state = core_dm.getDownloadState();
 			
-			if ( 	( dm_state.getTransientFlags() & 
+			long tFlags = dm_state.getTransientFlags();
+			
+			if ( 	( tFlags & 
 						( 	DownloadManagerState.TRANSIENT_FLAG_FRIEND_FP | 
 							DownloadManagerState.TRANSIENT_FLAG_TAG_FP )) != 0 ){
 				
@@ -1466,6 +1532,14 @@ RankCalculatorReal
 				return( true );
 			}
 			
+			if (( tFlags & DownloadManagerState.TRANSIENT_FLAG_TAG_NOT_FP ) != 0 ){
+			
+			if (rules.bDebugLog)
+				sExplainFP += "Not FP: Tag is Not FP\n";
+			
+				return( false );
+			}
+				
 			if (!dl.isPersistent()) {
 				if (rules.bDebugLog)
 					sExplainFP += "Not FP: Download not persistent\n";
@@ -2070,26 +2144,52 @@ RankCalculatorReal
 				if (iRankType == StartStopRulesDefaultPlugin.RANK_TIMED) {
 					//sText += "" + sr + " ";
 					if (sr > DefaultRankCalculator.SR_TIMED_QUEUED_ENDS_AT) {
-						long timeStarted = dl.getStats().getTimeStartedSeeding();
+						long seedingStart = dl.getStats().getTimeStartedSeeding();
 						long timeLeft;
 
 						long lMsTimeToSeedFor = minTimeAlive;
 						if (iTimed_MinSeedingTimeWithPeers > 0) {
-	  					PeerManager peerManager = dl.getPeerManager();
-	  					if (peerManager != null) {
-	  						int connectedLeechers = peerManager.getStats().getConnectedLeechers();
-	  						if (connectedLeechers > 0) {
-	  							lMsTimeToSeedFor = iTimed_MinSeedingTimeWithPeers;
-	  						}
-	  					}
+							
+		  					PeerManager peerManager = dl.getPeerManager();
+		  					
+		  					if (peerManager != null) {
+		  						
+		  						int connectedLeechers = peerManager.getStats().getConnectedLeechers();
+		  						
+		  						if (connectedLeechers > 0) {
+		  							
+		  							lMsTimeToSeedFor = iTimed_MinSeedingTimeWithPeers;
+		  							
+		  							if ( iTimed_MaxSeedingTimeWithPeers > iTimed_MinSeedingTimeWithPeers && lastModifiedScrapeResultPeers > 0 ){
+			  							
+		  								if ( lastModifiedScrapeResultSeeds == 0 ){
+		  									
+		  									lMsTimeToSeedFor = iTimed_MaxSeedingTimeWithPeers;
+		  									
+		  								}else{
+		  									
+		  									float psRatio = (float)lastModifiedScrapeResultPeers/lastModifiedScrapeResultSeeds;
+
+		  									long diff = iTimed_MaxSeedingTimeWithPeers -  iTimed_MinSeedingTimeWithPeers;
+		  									
+		  									lMsTimeToSeedFor += diff - ( diff / ( 1.0 + psRatio ));
+		  								}
+		  							}
+		  							
+		 							if ( timedRotationSeedingStart == seedingStart ){
+			  							
+		  								lMsTimeToSeedFor = Math.max( lMsTimeToSeedFor, timedRotationSeedingStartMinSeeding );
+		 							}
+		  						}
+		  					}
 						}
 
 						if (dl.isForceStart())
 							timeLeft = Constants.CRAPPY_INFINITY_AS_INT;
-						else if (timeStarted <= 0)
+						else if (seedingStart <= 0)
 							timeLeft = lMsTimeToSeedFor;
 						else
-							timeLeft = (lMsTimeToSeedFor - (SystemTime.getCurrentTime() - timeStarted));
+							timeLeft = (lMsTimeToSeedFor - (SystemTime.getCurrentTime() - seedingStart));
 
 						sText += TimeFormatter.format(timeLeft / 1000);
 					} else if (sr > 0) {

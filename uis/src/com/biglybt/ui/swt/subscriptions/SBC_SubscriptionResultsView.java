@@ -19,6 +19,7 @@
 package com.biglybt.ui.swt.subscriptions;
 
 
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.List;
 import java.util.function.Function;
@@ -37,6 +38,7 @@ import com.biglybt.core.internat.MessageText;
 import com.biglybt.core.subs.Subscription;
 import com.biglybt.core.subs.SubscriptionDownloadListener;
 import com.biglybt.core.subs.SubscriptionException;
+import com.biglybt.core.subs.SubscriptionHistory;
 import com.biglybt.core.subs.SubscriptionListener;
 import com.biglybt.core.subs.SubscriptionResult;
 import com.biglybt.core.subs.SubscriptionResultFilter;
@@ -187,7 +189,9 @@ SBC_SubscriptionResultsView
 				}
 			}
 		}
-				
+			
+		SWTSkinObjectText info;
+		
 		if ( ds != null ){
 
 			if (( ds.getViewOptions() & Subscription.VO_HIDE_HEADER) != 0 ){
@@ -209,8 +213,6 @@ SBC_SubscriptionResultsView
 
 				control.setMenu( menu );
 
-				final String menu_key = SubscriptionMDIEntry.setupMenus( ds, null );
-
 				menu.addMenuListener(
 					new MenuListener() {
 
@@ -219,6 +221,8 @@ SBC_SubscriptionResultsView
 							for ( MenuItem mi: menu.getItems()){
 								mi.dispose();
 							}
+
+							String menu_key = SubscriptionMDIEntry.setupMenus( ds, null );
 
 							com.biglybt.pif.ui.menus.MenuItem[] menu_items = MenuItemManager.getInstance().getAllAsArray( menu_key );
 
@@ -231,6 +235,12 @@ SBC_SubscriptionResultsView
 						}
 					});
 			}
+			
+			info = (SWTSkinObjectText) getSkinObject("topinfo");
+			
+		}else{
+			
+			info = null;
 		}
 
 		final SWTSkinObject soFilterArea = getSkinObject("filterarea");
@@ -308,6 +318,46 @@ SBC_SubscriptionResultsView
 								}
 								
 								return;
+							}
+							
+							if ( info != null ){
+																
+								SubscriptionHistory history = ds.getHistory();
+								
+								String error = history.getLastError();
+
+								boolean isError = error != null && !error.isEmpty();
+											
+								String lastUpdate;
+								
+								if ( isError ){
+									
+									lastUpdate = MessageText.getString( "ManagerItem.error" ) + " (" + DisplayFormatters.formatDateYMDHM( ds.getHistory().getLastErrorTime()) + ")";
+								}else{
+									
+									lastUpdate = DisplayFormatters.formatDateYMDHM( history.getLastScanTime());
+								}
+								
+								long next = history.getNextScanTime();
+								
+								long nextScheduled = history.getNextScheduledUpdate();
+								
+								if ( nextScheduled > 0 ){
+									
+									next = nextScheduled;
+								}
+								
+								info.setText( 
+										MessageText.getString( "Trackers.column.last_update" ) + ": " + lastUpdate + ", " +
+										MessageText.getString( "Button.next" ) + ": " + DisplayFormatters.formatDateYMDHM( next ));
+								
+								
+								if ( !isError ){
+									
+									error = MessageText.getString( "label.none" );
+								}
+								
+								Utils.setTT( info.getControl(), MessageText.getString( "subs.prop.last_error" ) + ": " + error );
 							}
 							
 							List<Subscription> deps = ds_filter.getDependsOn();
@@ -440,6 +490,7 @@ SBC_SubscriptionResultsView
 				lblWithKWImg.setImage( imageLoader.getImage( with?"icon_filter_plus":"icon_filter_minus"));
 
 				final Text textWithKW = new Text(cWithKW, SWT.BORDER);
+				Utils.setTT(textWithKW,MessageText.getString("SubscriptionResults.filter.words.tt" ));
 				textWithKW.setMessage(MessageText.getString(with?"SubscriptionResults.filter.with.words":"SubscriptionResults.filter.without.words"));
 				GridData gd = new GridData();
 				gd.widthHint = 100;
@@ -450,7 +501,7 @@ SBC_SubscriptionResultsView
 
 						@Override
 						public void modifyText(ModifyEvent e) {
-							String text = textWithKW.getText().toLowerCase( Locale.US );
+							String text = textWithKW.getText();
 							String[] bits = text.split( "\\s+");
 
 							Set<String>	temp = new HashSet<>();
@@ -679,26 +730,35 @@ SBC_SubscriptionResultsView
 			if ( ds != null ){
 
 				if ( ds.isUpdateable() ){
+					
 					sep = Utils.createSkinnedLabelSeparator(vFilters, SWT.VERTICAL );
+					
 					sep.setLayoutData(new RowData(-1, sepHeight));
 	
-					final Runnable					f_pFilterUpdater 	= pFilterUpdater;
+					final Runnable	f_pFilterUpdater 	= pFilterUpdater;
 	
 					Button save = new Button( vFilters,SWT.PUSH );
+					
 					save.setText( MessageText.getString( "ConfigView.button.save" ));
+					
 					save.addListener(SWT.Selection, new Listener() {
 						@Override
 						public void handleEvent(Event event) {
 	
-							try{
-								ds_filter.save();
+							Utils.getOffOfSWTThread(()->{
+								
+								try{
+									ds_filter.save();
+									
+								}catch( Throwable e ){
+									
+									Debug.out( e );
 	
-								f_pFilterUpdater.run();
-	
-							}catch( Throwable e ){
-	
-								Debug.out( e );
-							}
+								}finally{
+									
+									Utils.execSWTThread(()->f_pFilterUpdater.run());
+								}
+							});
 						}
 					});
 				}
@@ -911,6 +971,39 @@ SBC_SubscriptionResultsView
 
 		tableManager.registerColumn(
 			SubscriptionResultFilterable.class,
+			ColumnSearchSubResultSeeds.COLUMN_ID,
+				new TableColumnCreationListener() {
+
+					@Override
+					public void tableColumnCreated(TableColumn column) {
+						new ColumnSearchSubResultSeeds(column);
+					}
+				});
+
+		tableManager.registerColumn(
+			SubscriptionResultFilterable.class,
+			ColumnSearchSubResultPeers.COLUMN_ID,
+				new TableColumnCreationListener() {
+
+					@Override
+					public void tableColumnCreated(TableColumn column) {
+						new ColumnSearchSubResultPeers(column);
+					}
+				});
+		
+		tableManager.registerColumn(
+			SubscriptionResultFilterable.class,
+			ColumnSearchSubResultGrabbed.COLUMN_ID,
+				new TableColumnCreationListener() {
+
+					@Override
+					public void tableColumnCreated(TableColumn column) {
+						new ColumnSearchSubResultGrabbed(column);
+					}
+				});
+		
+		tableManager.registerColumn(
+			SubscriptionResultFilterable.class,
 			ColumnSearchSubResultRatings.COLUMN_ID,
 				new TableColumnCreationListener() {
 
@@ -1010,6 +1103,66 @@ SBC_SubscriptionResultsView
 						new ColumnSearchSubResultExisting(column);
 					}
 				});
+		
+		tableManager.registerColumn(
+				SubscriptionResultFilterable.class,
+				ColumnSearchSubResultDLHistoryAdded.COLUMN_ID,
+				new TableColumnCoreCreationListener() {
+					@Override
+					public TableColumnCore 
+					createTableColumnCore(
+							Class<?> forDataSourceType, String tableID, String columnID) 
+					{
+						return new ColumnDateSizer(
+								SubscriptionResultFilterable.class, columnID,
+								TableColumnCreator.DATE_COLUMN_WIDTH, tableID){};
+					}
+
+					@Override
+					public void tableColumnCreated(TableColumn column) {
+						new ColumnSearchSubResultDLHistoryAdded(column);
+					}
+				});
+		
+		tableManager.registerColumn(
+			SubscriptionResultFilterable.class,
+			ColumnSearchSubResultDLHistoryCompleted.COLUMN_ID,
+			new TableColumnCoreCreationListener() {
+				@Override
+				public TableColumnCore 
+				createTableColumnCore(
+						Class<?> forDataSourceType, String tableID, String columnID) 
+				{
+					return new ColumnDateSizer(
+							SubscriptionResultFilterable.class, columnID,
+							TableColumnCreator.DATE_COLUMN_WIDTH, tableID){};
+				}
+
+				@Override
+				public void tableColumnCreated(TableColumn column) {
+					new ColumnSearchSubResultDLHistoryCompleted(column);
+				}
+			});
+		
+		tableManager.registerColumn(
+				SubscriptionResultFilterable.class,
+				ColumnSearchSubResultDLHistoryRemoved.COLUMN_ID,
+				new TableColumnCoreCreationListener() {
+					@Override
+					public TableColumnCore 
+					createTableColumnCore(
+							Class<?> forDataSourceType, String tableID, String columnID) 
+					{
+						return new ColumnDateSizer(
+								SubscriptionResultFilterable.class, columnID,
+								TableColumnCreator.DATE_COLUMN_WIDTH, tableID){};
+					}
+
+					@Override
+					public void tableColumnCreated(TableColumn column) {
+						new ColumnSearchSubResultDLHistoryRemoved(column);
+					}
+				});
 	}
 
 	@Override
@@ -1075,7 +1228,7 @@ SBC_SubscriptionResultsView
 		Subscription		subs,
 		int					reason )
 	{
-		if ( reason == CR_RESULTS){
+		if ( reason == CR_RESULTS ){
 
 			TableViewSWT<SubscriptionResultFilterable> tv = tv_subs_results;
 					
@@ -1091,7 +1244,10 @@ SBC_SubscriptionResultsView
 						}
 					});
 			}
-		}else if ( reason == CR_METADATA ){
+		}
+		
+		
+		if ( reason == CR_METADATA || reason == CR_RESULTS ){
 			
 			if ( pFilterUpdater != null ){
 				
@@ -1100,7 +1256,6 @@ SBC_SubscriptionResultsView
 					pFilterUpdater.run();
 				});
 			}
-
 		}
 	}
 
@@ -1177,6 +1332,14 @@ SBC_SubscriptionResultsView
 
 			initTable((Composite) so_list.getControl());
 		}
+		
+		if ( pFilterUpdater != null ){
+			
+			Utils.execSWTThread(()->{
+				
+				pFilterUpdater.run();
+			});
+		}
 	}
 
 	private void
@@ -1197,6 +1360,8 @@ SBC_SubscriptionResultsView
 			}
 		}
 
+		col_filter_helper = null;
+		
 		Utils.disposeSWTObjects(new Object[] {
 			table_parent,
 		});
@@ -1315,6 +1480,8 @@ SBC_SubscriptionResultsView
 			tooltip += MessageText.getString("column.filter.tt.line2");
 
 			bubbleTextBox.setTooltip( tooltip );
+			
+			bubbleTextBox.setMessage( MessageText.getString( "Button.search2" ) );
 		}
 
 		tv_subs_results.setRowDefaultHeight(COConfigurationManager.getIntParameter( "Search Subs Row Height" ));
@@ -1413,7 +1580,7 @@ SBC_SubscriptionResultsView
 							
 						if ( Arrays.equals(((SubscriptionResultFilterable)row.getDataSource()).getHash(), hash )){
 			
-							target = Colors.blues[ Colors.BLUES_MIDLIGHT ];
+							target = Utils.isDarkAppearanceNative()?Colors.faded[Colors.FADED_DARKEST-2]:Colors.blues[ Colors.BLUES_MIDLIGHT ];
 						}
 					}
 					

@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.function.Supplier;
 
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.dnd.Clipboard;
@@ -36,6 +37,8 @@ import com.biglybt.core.peer.PEPeer;
 import com.biglybt.core.peer.PEPiece;
 import com.biglybt.core.tracker.host.TRHostTorrent;
 import com.biglybt.core.util.*;
+import com.biglybt.core.util.StringInterner.StringSupplier;
+import com.biglybt.core.util.StringInterner.StringSupplierBasic;
 import com.biglybt.ui.swt.Utils;
 import com.biglybt.ui.swt.mainwindow.Colors;
 import com.biglybt.ui.swt.pif.UISWTGraphic;
@@ -128,17 +131,6 @@ public class FakeTableCell
 
 	private Map<Object,Object>	userData;
 	
-	/**
-	 * @param columnRateUpDown
-	 */
-	public FakeTableCell(TableColumn column, Object ds) {
-		valid = false;
-		coreDataSource = ds;
-		this.tableColumn = (TableColumnCore) column;
-		setOrientationViaColumn();
-		tableColumn.invokeCellAddedListeners(this);
-	}
-
 	public FakeTableCell(TableColumnCore column, Object ds) {
 		valid = false;
 		coreDataSource = ds;
@@ -790,6 +782,11 @@ public class FakeTableCell
 	public String getText() {
 		return text;
 	}
+	
+	@Override
+	public StringSupplier getTextSupplier() {
+		return new StringSupplierBasic( text );
+	}
 
 	// @see com.biglybt.pif.ui.tables.TableCell#getToolTip()
 	@Override
@@ -956,6 +953,13 @@ public class FakeTableCell
 		return true;
 	}
 
+	@Override
+	public boolean 
+	setText(
+		StringSupplier supplier)
+	{
+		return( setText( supplier.get()));
+	}
 	
 	@Override
 	public String 
@@ -1155,22 +1159,26 @@ public class FakeTableCell
 		this.cellArea = cellArea;
 
 		if (addListeners) {
-  		composite.addPaintListener(this);
-  		composite.addMouseListener(this);
-  		composite.addMouseMoveListener(this);
-  		composite.addMouseTrackListener(this);
+	  		composite.addPaintListener(this);
+	  		composite.addMouseListener(this);
+	  		composite.addMouseMoveListener(this);
+	  		composite.addMouseTrackListener(this);
 		}
-
-		setForeground(-1, -1, -1);
-		setText(null);
+		
+		setText((String)null);
 		setToolTip(null);
 
-		composite.addDisposeListener(new DisposeListener() {
-			@Override
-			public void widgetDisposed(DisposeEvent e) {
-				dispose();
-			}
+		Utils.execSWTThread(()->{
+			setForeground(-1, -1, -1);
+	
+			composite.addDisposeListener(new DisposeListener() {
+				@Override
+				public void widgetDisposed(DisposeEvent e) {
+					dispose();
+				}
+			});
 		});
+		
 		if (coreDataSource != null && !isDisposed()) {
 			invokeVisibilityListeners(TableCellVisibilityListener.VISIBILITY_SHOWN,
 					true);
@@ -1335,7 +1343,7 @@ public class FakeTableCell
 			disposeListeners = null;
 		}
 		tableColumn.invokeCellDisposeListeners(this);
-		tableColumn.invalidateCells();
+		//tableColumn.invalidateCells();
 	}
 
 	// @see TableCellCore#getCursorID()

@@ -22,9 +22,11 @@ package com.biglybt.core.tag.impl;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.biglybt.core.internat.MessageText;
 import com.biglybt.core.tag.*;
@@ -50,6 +52,16 @@ TagTypeBase
 
 	private static final TagManagerImpl manager = TagManagerImpl.getSingleton();
 
+	private static final AtomicInteger	all_tags_or_tag_membership_mut = new AtomicInteger();
+	
+	public static int
+	getTagAndTaggableMut()
+	{
+		return( all_tags_or_tag_membership_mut.get());
+	}
+	
+	private final AtomicInteger	tags_or_tag_membership_mut = new AtomicInteger();
+	
 	private final ListenerManager<TagTypeListener>	tt_listeners 	=
 		ListenerManager.createManager(
 			"TagTypeListeners",
@@ -74,7 +86,7 @@ TagTypeBase
 						if ( type == TTL_ADD ){
 
 							event_type	= TagTypeListener.TagEvent.ET_TAG_ADDED;
-
+							
 						}else if ( type == TTL_TAG_METADATA_CHANGE ){
 
 							event_type	= TagTypeListener.TagEvent.ET_TAG_METADATA_CHANGED;
@@ -82,11 +94,11 @@ TagTypeBase
 						}else if ( type == TTL_TAG_MEMBERHIP_CHANGE ){
 
 							event_type	= TagTypeListener.TagEvent.ET_TAG_MEMBERSHIP_CHANGED;
-
+							
 						}else if ( type == TTL_REMOVE ){
 
 							event_type	= TagTypeListener.TagEvent.ET_TAG_REMOVED;
-
+							
 						}else if ( type == TTL_ATTENTION_REQUESTED ){
 
 							event_type	= TagTypeListener.TagEvent.ET_TAG_ATTENTION_REQUESTED;
@@ -117,15 +129,22 @@ TagTypeBase
 
 	private Map<String,TagGroupImpl>	tag_groups = new HashMap<>();
 
+	private final String TTP_TAGS_FOR_TAGGABLE_CACHE;
+
+	
 	protected
 	TagTypeBase(
 		int			_tag_type,
 		int			_tag_features,
-		String		_tag_name )
+		String		_tag_type_name )
 	{
 		tag_type			= _tag_type;
 		tag_type_features	= _tag_features;
-		tag_type_name		= _tag_name;
+		tag_type_name		= _tag_type_name;
+		
+		TTP_TAGS_FOR_TAGGABLE_CACHE = "TagTypeBase::tags_for_taggable_cache::" + tag_type;
+		
+		all_tags_or_tag_membership_mut.incrementAndGet();
 	}
 
 	protected void
@@ -249,6 +268,14 @@ TagTypeBase
 		throw( new TagException( "Not supported" ));
 	}
 
+	protected void
+	tagsOrMembershipChanged()
+	{
+		tags_or_tag_membership_mut.incrementAndGet();
+		
+		all_tags_or_tag_membership_mut.incrementAndGet();
+	}
+	
 	@Override
 	public void
 	addTag(
@@ -256,6 +283,8 @@ TagTypeBase
 	{
 		((TagBase)t).initialized();
 
+		tagsOrMembershipChanged();
+		
 		tt_listeners.dispatch( TTL_ADD, t );
 	}
 
@@ -266,6 +295,8 @@ TagTypeBase
 	{
 		((TagBase)t).destroy();
 
+		tagsOrMembershipChanged();
+		
 		tt_listeners.dispatch( TTL_REMOVE, t );
 
 		manager.removeConfig( t );
@@ -339,13 +370,25 @@ TagTypeBase
 
 		return( null );
 	}
-
+	
 	@Override
 	public List<Tag>
 	getTagsForTaggable(
 		Taggable	taggable )
 	{
-		List<Tag>	result = new ArrayList<>();
+		int mut = tags_or_tag_membership_mut.get();
+		
+		Object[] cache = (Object[])taggable.getTaggableTransientProperty( TTP_TAGS_FOR_TAGGABLE_CACHE );
+		
+		if ( cache != null ){
+			
+			if (((Integer)cache[0]) == mut ){
+				
+				return((List<Tag>)cache[1]);
+			}
+		}
+		
+		List<Tag>	result = null;
 
 		int taggable_type = taggable.getTaggableType();
 
@@ -355,15 +398,27 @@ TagTypeBase
 
 				if ( t.hasTaggable( taggable )){
 
+					if ( result == null ){
+						
+						result = new ArrayList<>();
+					}
+					
 					result.add( t );
 				}
 			}
 		}
 
+		if ( result == null ){
+			
+			result = Collections.emptyList();
+		}
+		
+		taggable.setTaggableTransientProperty( TTP_TAGS_FOR_TAGGABLE_CACHE, new Object[]{ mut, result });
+		
 		return( result );
 	}
 
-	protected void
+	private void
 	fireMembershipChanged(
 		Tag	t )
 	{
@@ -433,47 +488,52 @@ TagTypeBase
 		Tag			tag,
 		Taggable	tagged )
 	{
-		List<TagListener> listeners;
-
-		synchronized( tag_listeners ){
-
-			listeners = tag_listeners.get( tagged );
-		}
-
-		if ( listeners != null ){
-
-			for ( TagListener l: listeners ){
-
-				try{
-					l.taggableAdded(tag, tagged);
-
-				}catch( Throwable e ){
-
-					Debug.out( e );
-				}
+		try{
+			List<TagListener> listeners;
+	
+			synchronized( tag_listeners ){
+	
+				listeners = tag_listeners.get( tagged );
 			}
-		}
-
-		manager.taggableAdded( this, tag, tagged );
-		
-		TagGroup tg = tag.getGroupContainer();
-		
-		if ( tg != null && tg.getName() != null && tg.isExclusive()){
-			
-			List<Tag> tags = tg.getTags();
-			
-			for ( Tag t: tags ){
-				
-				if ( t != tag && t.hasTaggable( tagged )){
-					
-					boolean[] auto = t.isTagAuto();
-					
-					if ( !auto[0] ){
-						
-						t.removeTaggable( tagged );
+	
+			if ( listeners != null ){
+	
+				for ( TagListener l: listeners ){
+	
+					try{
+						l.taggableAdded(tag, tagged);
+	
+					}catch( Throwable e ){
+	
+						Debug.out( e );
 					}
 				}
 			}
+	
+			manager.taggableAdded( this, tag, tagged );
+			
+			TagGroup tg = tag.getGroupContainer();
+			
+			if ( tg != null && tg.getName() != null && tg.isExclusive()){
+				
+				List<Tag> tags = tg.getTags();
+				
+				for ( Tag t: tags ){
+					
+					if ( t != tag && t.hasTaggable( tagged )){
+						
+						boolean[] auto = t.isTagAuto();
+						
+						if ( !auto[0] ){
+							
+							t.removeTaggable( tagged );
+						}
+					}
+				}
+			}
+		}finally{
+			
+			fireMembershipChanged( tag );
 		}
 	}
 
@@ -510,28 +570,34 @@ TagTypeBase
 		Tag			tag,
 		Taggable	tagged )
 	{
-		List<TagListener> listeners;
-
-		synchronized( tag_listeners ){
-
-			listeners = tag_listeners.get( tagged );
-		}
-
-		if ( listeners != null ){
-
-			for ( TagListener l: listeners ){
-
-				try{
-					l.taggableRemoved(tag, tagged);
-
-				}catch( Throwable e ){
-
-					Debug.out( e );
+		try{
+			List<TagListener> listeners;
+	
+			synchronized( tag_listeners ){
+	
+				listeners = tag_listeners.get( tagged );
+			}
+	
+			if ( listeners != null ){
+	
+				for ( TagListener l: listeners ){
+	
+					try{
+						l.taggableRemoved(tag, tagged);
+	
+					}catch( Throwable e ){
+	
+						Debug.out( e );
+					}
 				}
 			}
+	
+			manager.taggableRemoved( this, tag, tagged );
+			
+		}finally{
+			
+			fireMembershipChanged(tag);
 		}
-
-		manager.taggableRemoved( this, tag, tagged );
 	}
 
 	@Override

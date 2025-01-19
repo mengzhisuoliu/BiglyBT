@@ -18,6 +18,7 @@
  */
 package com.biglybt.ui.swt;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -38,6 +39,8 @@ import org.eclipse.swt.events.MenuEvent;
 import org.eclipse.swt.events.MenuListener;
 import org.eclipse.swt.graphics.RGB;
 import org.eclipse.swt.widgets.Menu;
+import org.eclipse.swt.widgets.Shell;
+
 import com.biglybt.pif.ui.Graphic;
 import com.biglybt.pif.ui.GraphicURI;
 import com.biglybt.pif.ui.menus.MenuItem;
@@ -50,7 +53,11 @@ import com.biglybt.pifimpl.local.utils.FormattersImpl;
 import com.biglybt.pif.ui.tables.TableContextMenuItem;
 import com.biglybt.ui.common.table.TableView;
 import com.biglybt.ui.swt.pif.UISWTGraphic;
+import com.biglybt.ui.swt.plugin.net.buddy.swt.BuddyUIUtils;
 import com.biglybt.ui.swt.shells.main.MainMenuV3;
+import com.biglybt.core.config.COConfigurationManager;
+import com.biglybt.core.disk.DiskManagerFileInfo;
+import com.biglybt.core.download.DownloadManager;
 import com.biglybt.core.internat.MessageText;
 import com.biglybt.core.util.*;
 
@@ -58,7 +65,6 @@ import com.biglybt.plugin.I2PHelpers;
 import com.biglybt.plugin.net.buddy.BuddyPluginUtils;
 import com.biglybt.plugin.net.buddy.BuddyPluginBeta;
 import com.biglybt.plugin.net.buddy.BuddyPluginBeta.ChatInstance;
-import com.biglybt.plugin.net.buddy.swt.BuddyUIUtils;
 
 
 /**
@@ -75,7 +81,7 @@ import com.biglybt.plugin.net.buddy.swt.BuddyUIUtils;
  * @author Allan Crooks
  */
 public class MenuBuildUtils {
-
+ 
 	/**
 	 * An interface to be used for addMaintenanceListenerForMenu.
 	 */
@@ -422,20 +428,7 @@ public class MenuBuildUtils {
 			return( result );
 		}
 
-		Collections.sort(
-			flat_entries,
-			new Comparator<String>()
-			{
-				final Comparator<String> comp = new FormattersImpl().getAlphanumericComparator( true );
-
-				@Override
-				public int
-				compare(
-					String o1, String o2)
-				{
-					return( comp.compare( o1, o2 ));
-				}
-			});
+		flat_entries.sort(new FormattersImpl().getAlphanumericComparator(true));
 
 		int[] buckets = new int[split_after];
 
@@ -1558,5 +1551,203 @@ public class MenuBuildUtils {
 			receiver.accept(null);
 		});
 		clear_item.setEnabled( can_clear );
+	}
+	
+	public static boolean
+	hasOpenWithMenu(
+		Object		target,
+		boolean 	torrent )
+	{
+		boolean ok = false;
+		
+		for ( int i=0;i<ConfigKeysSWT.getLaunchHelperEntryCount();i++){
+			
+			String exe 	= ConfigKeysSWT.getLaunchHelpersProg(i).trim();
+
+			if ( exe.length() > 0 && Utils.fileExistsWithTimeout( exe )){
+				
+				ok = true;
+				
+				break;
+			}
+		}
+		
+		if ( !ok ){
+			
+			return( false );
+		}
+		
+		if ( target instanceof DownloadManager[] ){
+			
+			for ( DownloadManager dm: (DownloadManager[])target ){
+			
+				if ( torrent ){
+					
+					File tf = new File( dm.getTorrentFileName());
+					
+					if ( Utils.fileExistsWithTimeout( tf )){
+						
+						return( true );
+					}
+				}else{
+					
+					DiskManagerFileInfo[] files = dm.getDiskManagerFileInfoSet().getFiles();
+					
+					if ( files.length == 1 ){
+						
+							// allow incomplete files to be opened
+						
+						//if ( files[0].getAccessMode() == DiskManagerFileInfo.READ ){
+						
+						if ( Utils.fileExistsWithTimeout( files[0].getFile(true))){
+							
+							return( true );
+						}
+					}
+				}
+			}
+			
+		}else if ( target instanceof List ){
+			
+			List<DiskManagerFileInfo> files = (List<DiskManagerFileInfo>)target;
+			
+			for ( DiskManagerFileInfo file: files ){
+				
+				//if ( file.getAccessMode() == DiskManagerFileInfo.READ ){
+				
+				if ( Utils.fileExistsWithTimeout( file.getFile(true))){
+					
+					return( true );
+				}
+			}
+		}
+		
+		return( false );
+	}
+	
+	public static org.eclipse.swt.widgets.MenuItem
+	addOpenWithMenu(
+		org.eclipse.swt.widgets.Menu	menu,
+		boolean							has_menu,
+		Object							target,
+		boolean							torrent )
+	{
+		org.eclipse.swt.widgets.Menu 		openWithMenu;
+		org.eclipse.swt.widgets.MenuItem 	openWithItem;
+		
+		if ( has_menu ){
+			
+			openWithMenu = menu;
+			
+			openWithItem = null;
+			
+		}else{
+			openWithMenu = new org.eclipse.swt.widgets.Menu( menu.getShell(), SWT.DROP_DOWN );
+		
+			openWithItem = new org.eclipse.swt.widgets.MenuItem( menu, SWT.CASCADE );
+		
+			Messages.setLanguageText(openWithItem, "menu.open.with" );
+		
+			openWithItem.setMenu(openWithMenu);
+		}
+		
+		for ( int i=0;i<ConfigKeysSWT.getLaunchHelperEntryCount();i++){
+			
+			String exe 	= ConfigKeysSWT.getLaunchHelpersProg(i).trim();
+
+			if ( exe.length() > 0 && Utils.fileExistsWithTimeout( exe )){
+				
+				org.eclipse.swt.widgets.MenuItem mi = new org.eclipse.swt.widgets.MenuItem( openWithMenu, SWT.PUSH );
+		
+				mi.setText( exe );
+		
+				mi.addListener( SWT.Selection, (ev)->{
+					
+					if ( target instanceof DownloadManager[] ){
+						
+						for ( DownloadManager dm: (DownloadManager[])target ){
+						
+							if ( torrent ){
+								
+								File tf = new File( dm.getTorrentFileName());
+								
+								if ( Utils.fileExistsWithTimeout( tf )){
+									
+									Utils.launchFileExplicit( tf.getAbsolutePath(), exe );
+								}
+							}else{
+								DiskManagerFileInfo[] files = dm.getDiskManagerFileInfoSet().getFiles();
+								
+								if ( files.length == 1 ){
+									
+									//if ( files[0].getAccessMode() == DiskManagerFileInfo.READ ){
+									
+									if ( Utils.fileExistsWithTimeout( files[0].getFile(true))){
+										
+										Utils.launchFileExplicit( files[0], exe );
+									}
+								}
+							}
+						}
+						
+					}else if ( target instanceof List ){
+						
+						List<DiskManagerFileInfo> files = (List<DiskManagerFileInfo>)target;
+						
+						for ( DiskManagerFileInfo file: files ){
+							
+							//if ( file.getAccessMode() == DiskManagerFileInfo.READ ){
+							
+							if ( Utils.fileExistsWithTimeout( file.getFile(true))){
+								
+								Utils.launchFileExplicit( file, exe );
+							}
+						}
+					}
+				});
+			}
+		}
+		
+		return( openWithItem );
+	}
+	
+	public static void
+	addMOCHistory(
+		Menu 				moc_menu,
+		Consumer<String>	moc_setter )
+	{
+		List<String> moc_hist = COConfigurationManager.getStringListParameter( "open.torrent.window.moc.history" );
+		
+		if ( !moc_hist.isEmpty()){
+		
+			new org.eclipse.swt.widgets.MenuItem( moc_menu, SWT.SEPARATOR );
+			
+			for ( String hist: moc_hist ){
+				
+				org.eclipse.swt.widgets.MenuItem hist_item = new org.eclipse.swt.widgets.MenuItem( moc_menu, SWT.PUSH );
+
+				hist_item.setText( hist );
+
+				hist_item.addListener( SWT.Selection, (ev)->moc_setter.accept( hist ));
+			}
+		}
+	}
+	
+	public static void
+	addToMOCHistory(
+		String		path )
+	{
+		List<String> moc_hist = COConfigurationManager.getStringListParameter( "open.torrent.window.moc.history" );
+
+		moc_hist.remove( path );
+		
+		moc_hist.add( 0, path );
+		
+		if ( moc_hist.size() > 50 ){	// user wants 50, if people complain too big then make it configurable
+			
+			moc_hist.remove( moc_hist.size()-1 );
+		}
+		
+		COConfigurationManager.setParameter( "open.torrent.window.moc.history", moc_hist );
 	}
 }

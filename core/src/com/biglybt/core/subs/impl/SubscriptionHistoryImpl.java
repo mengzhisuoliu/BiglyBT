@@ -56,7 +56,11 @@ SubscriptionHistoryImpl
 	
 	private long		max_age_secs	= -1;
 	
+	private long			next_scheduled;
+	
 	private String			last_error;
+	private long			last_error_time;
+	
 	private boolean			auth_failed;
 	private int				consec_fails;
 
@@ -348,6 +352,12 @@ SubscriptionHistoryImpl
 		}
 	}
 
+	public Subscription
+	getSubscription()
+	{
+		return( subs );
+	}
+	
 	@Override
 	public boolean
 	isEnabled()
@@ -365,6 +375,34 @@ SubscriptionHistoryImpl
 			enabled	= _enabled;
 
 			saveConfig(SubscriptionListener.CR_METADATA);
+			
+			if ( _enabled && isAutoDownload()){
+				
+				List<SubscriptionResult>	unread_results = new ArrayList<>();
+
+				synchronized( this ){
+
+					LinkedHashMap<String,SubscriptionResultImpl> results_map = manager.loadResults( subs );
+
+					for ( SubscriptionResult result: results_map.values()){
+
+						if ( result.isDeleted()){
+
+							continue;
+						}
+
+						if ( !result.getRead()){
+
+							unread_results.add( result );
+						}
+					}
+				}
+				
+				for ( SubscriptionResult result: unread_results ){
+					
+					manager.getScheduler().download( subs, result);
+				}
+			}
 		}
 	}
 
@@ -513,6 +551,26 @@ SubscriptionHistoryImpl
 		return( last_new_result );
 	}
 
+	@Override
+	public void 
+	setNextScheduledUpdate(
+		long when )
+	{
+		if ( next_scheduled != when ){
+		
+			next_scheduled = when;
+		
+			subs.fireChanged( SubscriptionListener.CR_METADATA, false );
+		}
+	}
+	
+	@Override
+	public long 
+	getNextScheduledUpdate()
+	{
+		return( next_scheduled );
+	}
+	
 	@Override
 	public long
 	getNextScanTime()
@@ -727,7 +785,7 @@ SubscriptionHistoryImpl
 			saveConfig(SubscriptionListener.CR_RESULTS);
 		}
 
-		if ( isAutoDownload() && !result.getRead() && !result.isDeleted()){
+		if ( isEnabled() && isAutoDownload() && !result.getRead() && !result.isDeleted()){
 
 			manager.getScheduler().download( subs, result );
 		}
@@ -818,6 +876,56 @@ SubscriptionHistoryImpl
 		}
 	}
 
+	@Override
+	public void
+	removeResults(
+		String[] result_ids )
+	{
+		ByteArrayHashMap<String> rids = new ByteArrayHashMap<>();
+
+		for (int i=0;i<result_ids.length;i++){
+
+			rids.put( Base32.decode( result_ids[i]), "" );
+		}
+
+		boolean	changed = false;
+
+		synchronized( this ){
+
+			LinkedHashMap<String,SubscriptionResultImpl> results_map = manager.loadResults( subs );
+
+			List<SubscriptionResultImpl>	new_results = new ArrayList<>( results_map.size());
+			
+			for ( SubscriptionResultImpl result: results_map.values()){
+
+				if ( !result.isDeleted() && rids.containsKey( result.getKey1())){
+
+					changed = true;
+
+					result.deleteInternal();
+					
+				}else{
+					
+					new_results.add( result );
+				}
+			}
+
+			if ( changed ){
+
+				SubscriptionResultImpl[] results = new_results.toArray( new SubscriptionResultImpl[ new_results.size()]);
+				
+				updateReadUnread( results );
+
+				manager.saveResults( subs, results, null );
+			}
+		}
+
+		if ( changed ){
+
+			saveConfig(SubscriptionListener.CR_RESULTS);
+		}
+	}
+	
 	@Override
 	public void
 	markAllResultsRead()
@@ -961,7 +1069,7 @@ SubscriptionHistoryImpl
 			saveConfig(SubscriptionListener.CR_RESULTS);
 		}
 
-		if ( isAutoDownload()){
+		if ( isEnabled() && isAutoDownload()){
 
 			for (int i=0;i<new_unread_results.size();i++){
 
@@ -1162,7 +1270,10 @@ SubscriptionHistoryImpl
 		String		_error )
 	{
 		last_error		= _error;
+		last_error_time	= SystemTime.getCurrentTime();
 		consec_fails	= 1024;
+		
+		subs.fireChanged( SubscriptionListener.CR_METADATA );
 	}
 
 	protected void
@@ -1180,6 +1291,8 @@ SubscriptionHistoryImpl
 		}else{
 
 			consec_fails++;
+			
+			last_error_time	= SystemTime.getCurrentTime();
 		}
 
 		subs.fireChanged( SubscriptionListener.CR_METADATA );
@@ -1192,6 +1305,13 @@ SubscriptionHistoryImpl
 		return( last_error );
 	}
 
+	@Override
+	public long 
+	getLastErrorTime()
+	{
+		return( last_error_time );
+	}
+	
 	@Override
 	public boolean
 	isAuthFail()

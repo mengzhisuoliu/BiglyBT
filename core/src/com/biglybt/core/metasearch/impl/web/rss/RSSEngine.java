@@ -35,6 +35,7 @@ import com.biglybt.core.metasearch.impl.web.WebEngine;
 import com.biglybt.core.metasearch.impl.web.WebResult;
 import com.biglybt.core.util.ByteFormatter;
 import com.biglybt.core.util.Debug;
+import com.biglybt.core.util.RegExUtil;
 import com.biglybt.core.util.SystemTime;
 import com.biglybt.core.util.UrlUtils;
 import com.biglybt.pif.utils.StaticUtilities;
@@ -48,8 +49,11 @@ public class
 RSSEngine
 	extends WebEngine
 {
-	private Pattern seed_leecher_pat 	= Pattern.compile("([0-9]+)\\s+(seed|leecher)s", Pattern.CASE_INSENSITIVE);
-	private Pattern size_pat 			= Pattern.compile("([0-9\\.]+)\\s+(B|KB|KiB|MB|MiB|GB|GiB|TB|TiB)", Pattern.CASE_INSENSITIVE);
+	private Pattern seed_leecher_pat1 	= Pattern.compile("([0-9]+)" + RegExUtil.PAT_WHITE_SPACE + "(seed|seeder|leech|leecher)s", Pattern.CASE_INSENSITIVE );
+	private Pattern seed_leecher_pat2 	= Pattern.compile("(seed|seeder|leech|leecher)s" + RegExUtil.PAT_WHITE_SPACE + "([0-9]+)", Pattern.CASE_INSENSITIVE );
+	private Pattern completed_pat	 	= Pattern.compile("(?:complete|completed)" + RegExUtil.PAT_WHITE_SPACE + "([0-9]+)", Pattern.CASE_INSENSITIVE );
+	
+	private Pattern size_pat 			= Pattern.compile("([0-9\\.]+)" + RegExUtil.PAT_WHITE_SPACE + "(B|KB|KiB|MB|MiB|GB|GiB|TB|TiB)", Pattern.CASE_INSENSITIVE );
 
 	public static EngineImpl
 	importFromBEncodedMap(
@@ -350,11 +354,14 @@ RSSEngine
 
 					int	item_seeds		= -1;
 					int item_peers		= -1;
+					int	item_completed	= -1;
+					
 					String item_hash	= null;
 					String item_magnet	= null;
 
-					String	desc_size = null;
-
+					String	desc_size		= null;
+					int		desc_completed	= -1;
+					
 					String potential_cdp_link = null;
 					
 					SimpleXMLParserDocumentNode node = item.getNode();
@@ -403,9 +410,17 @@ RSSEngine
 
 								if (lengthAtt != null){
 
-									result.setSizeFromHTML(lengthAtt.getValue());
+										// The enclosure size is supposed to be that of the related content, i.e. the size of the
+										// torrent file, NOT the size of the download
+										// However historically it was used incorrectly to refer to the sie of the download itself.
+										// So only accept it as such if the size is probably too large for a torrent file
+									result.setSizeFromHTML(lengthAtt.getValue(), 1024*1024 );
 								}
 							}
+						}else if ( lc_child_name.equals( "contentlength" )){
+							
+							result.setSizeFromHTML( value, 0 );
+							
 						}else if(lc_child_name.equals( "category" )) {
 
 							result.setCategoryFromHTML( value );
@@ -528,7 +543,7 @@ RSSEngine
 							}
 						}else if ( lc_full_child_name.equals( "vuze:size" )){
 
-							result.setSizeFromHTML( value );
+							result.setSizeFromHTML( value, 0 );
 
 						}else if ( lc_full_child_name.equals( "vuze:seeds" )){
 
@@ -602,12 +617,26 @@ RSSEngine
 						}else if( lc_child_name.equals( "peers" ) || lc_child_name.equals( "leechers" )){
 
 							try{
-								item_peers = Integer.parseInt( value );
+									// when we say "peers" we really mean "leechers" so if both are present we 
+									// have leechers over-riding peers as some feeds have "peers" meaning "seeders + leechers"...
+								
+								if ( lc_child_name.equals( "leechers" ) || item_peers < 0 ){
+								
+									item_peers = Integer.parseInt( value );
+								}
+							}catch( Throwable e ){
+
+							}
+						}else if( lc_child_name.equals( "grabs" ) || lc_child_name.equals( "completed" )){
+
+							try{
+								item_completed = Integer.parseInt( value );
 
 							}catch( Throwable e ){
 
 							}
-						}else if( lc_child_name.equals( "infohash" ) || lc_child_name.equals( "info_hash" )){
+
+						}else if( lc_child_name.equals( "infohash" ) || lc_child_name.equals( "info_hash" ) || lc_child_name.equals( "torrent_sha1" )){
 
 							item_hash = value;
 
@@ -641,26 +670,61 @@ RSSEngine
 
 								desc = desc.replaceAll( "\\(s\\)", "s" );
 
-								desc = desc.replaceAll( "seeders", "seeds" );
+								desc = desc.replace( ":", " " );
+								
+								desc = Result.removeHTMLTags( desc );
+								
+								Matcher m = seed_leecher_pat1.matcher( desc );
 
-								Matcher m = seed_leecher_pat.matcher( desc );
+								if ( m.find()){
+									
+									do{
+										String	num = m.group(1);
 
-								while( m.find()){
+										String	type = m.group(2);
 
-									String	num = m.group(1);
+										if ( type.toLowerCase().charAt(0) == 's' ){
 
-									String	type = m.group(2);
+											result.setNbSeedsFromHTML( num );
 
-									if ( type.toLowerCase().charAt(0) == 's' ){
+										}else{
 
-										result.setNbSeedsFromHTML( num );
+											result.setNbPeersFromHTML( num );
+										}
+									}while( m.find());
+									
+								}else{
+									
+									m = seed_leecher_pat2.matcher( desc );
 
-									}else{
+									while( m.find()){
+										
+										String	num = m.group(2);
 
-										result.setNbPeersFromHTML( num );
+										String	type = m.group(1);
+
+										if ( type.toLowerCase().charAt(0) == 's' ){
+
+											result.setNbSeedsFromHTML( num );
+
+										}else{
+
+											result.setNbPeersFromHTML( num );
+										}
 									}
 								}
+								
+								m = completed_pat.matcher( desc );
 
+								if ( m.find()){
+
+									try{
+										desc_completed = Integer.parseInt(m.group(1));
+										
+									}catch( Throwable e ){
+									}
+								}
+								
 								m = size_pat.matcher( desc );
 
 								if ( m.find()){
@@ -689,7 +753,7 @@ RSSEngine
 									try{
 										long l = Long.parseLong( n.getValue().trim());
 
-										result.setSizeFromHTML( l + " B" );
+										result.setSizeFromHTML( l + " B", 0 );
 
 									}catch( Throwable e ){
 
@@ -844,7 +908,7 @@ RSSEngine
 
 						if ( n != null ){
 
-							result.setSizeFromHTML( n.getValue().trim());
+							result.setSizeFromHTML( n.getValue().trim(), 0 );
 						}
 					}
 
@@ -862,6 +926,11 @@ RSSEngine
 
 							result.setTorrentLink( item_magnet );
 						}
+					}
+					
+					if ( item_completed >= 0 || desc_completed >= 0) {
+						
+						result.setNbCompleted(item_completed>= 0?item_completed:desc_completed);
 					}
 
 						// if we still have no download link see if the magnet is in the title
@@ -923,7 +992,7 @@ RSSEngine
 
 						if ( desc_size != null ){
 
-							result.setSizeFromHTML( desc_size );
+							result.setSizeFromHTML( desc_size, 0 );
 
 						}
 					}

@@ -30,6 +30,7 @@ import com.biglybt.core.config.COConfigurationManager;
 import com.biglybt.core.config.ParameterListener;
 import com.biglybt.core.disk.*;
 import com.biglybt.core.disk.impl.DiskManagerUtil;
+import com.biglybt.core.diskmanager.file.FMFileManagerFactory;
 import com.biglybt.core.download.*;
 import com.biglybt.core.download.DownloadManagerState.ResumeHistory;
 import com.biglybt.core.global.GlobalManager;
@@ -57,6 +58,7 @@ import com.biglybt.core.tracker.client.TRTrackerAnnouncer;
 import com.biglybt.core.tracker.client.TRTrackerAnnouncerDataProvider;
 import com.biglybt.core.tracker.client.TRTrackerScraperResponse;
 import com.biglybt.core.util.*;
+import com.biglybt.core.util.StringInterner.FileKey;
 import com.biglybt.core.util.bloom.BloomFilter;
 import com.biglybt.core.util.bloom.BloomFilterFactory;
 import com.biglybt.pif.PluginInterface;
@@ -186,7 +188,8 @@ DownloadManagerController
 	private DiskManagerListener				disk_manager_listener_use_accessors;
 
 	private Object							disk_manager_pieces_snapshot_lock = new Object();
-	private volatile DiskManagerPiece[]		disk_manager_pieces_snapshot;
+	
+	private volatile WeakReference<DiskManagerPiece[]>		disk_manager_pieces_snapshot;
 	
 	final FileInfoFacadeSet		fileFacadeSet = new FileInfoFacadeSet();
 	boolean					files_facade_destroyed;
@@ -511,7 +514,17 @@ DownloadManagerController
 					public int
 					getMaxNewConnectionsAllowed( String network )
 					{
-						return( temp.getMaxNewConnectionsAllowed( network ));
+						int num = temp.getMaxNewConnectionsAllowed( network );
+						
+							// if we have a download with 0 peers and we're at the connection limit then ask for a few to try and get it started
+							// if by the time we connect to a peer we are still at the limit the then connection will be declined anyway
+						
+						if ( num < 5 && getConnectedConnectionCount() == 0 && getPendingConnectionCount() < 5 ){
+							
+							num = 5;
+						}
+						
+						return( num );
 					}
 
 					@Override
@@ -1430,7 +1443,7 @@ DownloadManagerController
 
   		if ( call_filesExist ){
 
-  			filesExist( true );
+  			filesExist( true, false );
   		}
 
   		if ( _inform_changed ){
@@ -2167,7 +2180,8 @@ DownloadManagerController
 
 	public boolean
 	filesExist(
-		boolean	expected_to_be_allocated )
+		boolean	expected_to_be_allocated, 
+		boolean	test_only )
 	{
 		if ( !expected_to_be_allocated ){
 
@@ -2180,7 +2194,7 @@ DownloadManagerController
 		DiskManager dm = getDiskManager();
 
 		if (dm != null) {
-			return dm.filesExist();
+			return( dm.filesExist());
 		}
 
 		fileFacadeSet.makeSureFilesFacadeFilled(false);
@@ -2222,7 +2236,10 @@ DownloadManagerController
 							}
 						}
 
-						setFailed( DownloadManager.ET_FILE_MISSING, MessageText.getString("DownloadManager.error.datamissing") + ": " + file.getAbsolutePath());
+						if ( !test_only ){
+						
+							setFailed( DownloadManager.ET_FILE_MISSING, MessageText.getString("DownloadManager.error.datamissing") + ": " + file.getAbsolutePath());
+						}
 						
 						return false;
 
@@ -2234,16 +2251,21 @@ DownloadManagerController
 
 						if ( !COConfigurationManager.getBooleanParameter("File.truncate.if.too.large")){
 
-							setFailed(MessageText.getString("DownloadManager.error.badsize")
+							if ( !test_only ){
+							
+								setFailed(MessageText.getString("DownloadManager.error.badsize")
 									+ " " + file + "(" + fileInfo.getLength() + "/" + file.length() + ")");
-
+							}
 
 							return false;
 						}
 					}
 				}catch( Throwable e ){
 					
-					setFailed( "Existance check failed", e );
+					if ( !test_only ){
+					
+						setFailed( "Existance check failed", e );
+					}
 					
 					return false;
 				}
@@ -2394,12 +2416,15 @@ DownloadManagerController
 	{
 		synchronized( disk_manager_pieces_snapshot_lock ){
 		
-			if ( disk_manager_pieces_snapshot == null ){
+			WeakReference<DiskManagerPiece[]> snap = disk_manager_pieces_snapshot;
+			
+			if ( snap == null || snap.get() == null ){
 				
-				disk_manager_pieces_snapshot = DiskManagerUtil.getDiskManagerPiecesSnapshot( download_manager );			
+				disk_manager_pieces_snapshot = snap = 
+					new WeakReference<>( DiskManagerUtil.getDiskManagerPiecesSnapshot( download_manager, getDiskManagerFileInfoSet()));			
 			}
 			
-			return( disk_manager_pieces_snapshot );
+			return( snap.get() );
 		}
 	}
 
@@ -2556,6 +2581,18 @@ DownloadManagerController
 	{
 		stats.setDownloadRateLimitBytesPerSecond( b );
 	}
+	
+	protected void
+	rateLimitChanged()
+	{
+		DiskManager dm = getDiskManager();
+		
+		if ( dm != null ){
+			
+			dm.rateLimitChanged();
+		}
+	}
+	
 
 		// these per-download rates are not easy to implement as we either have per-peer limits or global limits, with the download-limits being implemented
 		// by adding them to all peers as peer-limits. So for the moment we stick with global (non-lan) limits
@@ -3124,14 +3161,13 @@ DownloadManagerController
 							public void stateChanged(DiskManager dm, int oldState, int newState) {}
 
 							@Override
-							public void filePriorityChanged(DiskManager dm, DiskManagerFileInfo file) {
+							public void filePriorityChanged(DiskManager dm, List<DiskManagerFileInfo> files) {
 								if (initialising[0]) {
-									delayed_prio_changes.add(file);
+									delayed_prio_changes.addAll(files);
 								} else {
-									download_manager.informPriorityChange(file);
+									download_manager.informPriorityChange(files);
 								}
 							}
-
 							@Override
 							public void pieceDoneChanged(DiskManager dm, DiskManagerPiece piece) {}
 							
@@ -3570,7 +3606,11 @@ DownloadManagerController
 		}
 	}
 
-	public void generateEvidence(IndentWriter writer) {
+	public void 
+	generateEvidence(
+		IndentWriter writer,
+		boolean		full )
+	{
 		writer.println("DownloadManager Controller:");
 
 		writer.indent();
@@ -3587,7 +3627,57 @@ DownloadManagerController
 				writer.println("Force Start");
 			}
 
-			writer.println("FilesExist? " + filesExist(download_manager.isDataAlreadyAllocated()));
+			writer.println("FilesExist? " + filesExist(download_manager.isDataAlreadyAllocated(), true));
+			
+			if ( full ){
+				
+				DiskManagerFileInfo[] files = fileFacadeSet.getFiles();
+				
+				writer.println( "Files" );
+				
+				try{
+					writer.indent();
+					
+					for ( DiskManagerFileInfo file: files ){
+						
+						File f = file.getFile( true );
+								
+						writer.println( file.getIndex() + ": " + f + ", exists=" + f.exists());
+					}
+				}finally{
+					
+					writer.exdent();
+				}
+				
+				writer.println( "Links" );
+				
+				try{
+					writer.indent();
+					
+					LinkFileMap links = download_manager_state.getFileLinks();
+					
+					Iterator<LinkFileMap.Entry> it = links.entryIterator();
+						
+					while( it.hasNext()){
+						
+						LinkFileMap.Entry entry = it.next();
+														
+						FileKey from = entry.getFromFileMaybeNull();
+						
+						writer.println( entry.getIndex() + ": " + (from==null?"":(from.get()+" ")) + "-> " + entry.getToFile().get());
+					}
+				}finally{
+					
+					writer.exdent();
+				}
+				
+				TOTorrent torrent = download_manager.getTorrent();
+				
+				if ( torrent != null ){
+				
+					FMFileManagerFactory.getSingleton().generateEvidence( writer, torrent );
+				}
+			}
 
 		} finally {
 			writer.exdent();
@@ -3729,10 +3819,10 @@ DownloadManagerController
 				}
 			}
 		}
-
+		
 		@Override
-		public void filePriorityChanged(DiskManager	dm, DiskManagerFileInfo file) {
-			download_manager.informPriorityChange(file);
+		public void filePriorityChanged(DiskManager	dm, List<DiskManagerFileInfo> files) {
+			download_manager.informPriorityChange(files);
 		}
 
 		@Override
@@ -3804,9 +3894,9 @@ DownloadManagerController
 
 						if ( completed < 1000 ){
 
-							if ( open_for_seeding ){
+							if ( open_for_seeding && stats.getRemainingExcludingDND() > 0 ){
 
-								setFailed( "File check failed" );
+								setFailed( "File check failed for seeding, download is incomplete" );
 
 								download_manager_state.clearResumeData();
 
@@ -3864,20 +3954,21 @@ DownloadManagerController
 		}
 
 		@Override
-		public void
+		public void 
 		filePriorityChanged(
-			DiskManager			dm, 
-			DiskManagerFileInfo	file )
+			DiskManager dm, 
+			List<DiskManagerFileInfo> files )
 		{
-			download_manager.informPriorityChange( file );
+			download_manager.informPriorityChange( files );
 		}
-
+		
 		@Override
 		public void
 		pieceDoneChanged(
 			DiskManager			dm, 
 			DiskManagerPiece	piece )
 		{
+			download_manager.informPieceDoneChanged( piece );
 		}
 		
 		@Override

@@ -27,6 +27,7 @@ import com.biglybt.core.config.COConfigurationManager;
 import com.biglybt.core.config.ParameterListener;
 import com.biglybt.core.internat.MessageText;
 import com.biglybt.core.util.*;
+import com.biglybt.core.util.StringInterner.StringSupplier;
 import com.biglybt.pif.disk.DiskManagerFileInfo;
 import com.biglybt.pif.download.Download;
 import com.biglybt.pif.download.DownloadTypeComplete;
@@ -172,6 +173,8 @@ public class TableColumnImpl
 
 	private int iPreferredWidthMax = -1;
 
+	private int iPreferredHeaderWidth = -1;
+	
 	private boolean auto_tooltip = false;
 
 	private Map userData;
@@ -180,8 +183,9 @@ public class TableColumnImpl
 
 	private List<Class<?>> forPluginDataSourceTypes = new ArrayList<>();
 
-	private String iconID;
-
+	private String	iconID;
+	private boolean	iconIDEnabled = true;
+	
 	private boolean firstLoad;
 
 	private boolean showOnlyImage;
@@ -1232,7 +1236,7 @@ public class TableColumnImpl
 	public final void loadSettings(Map mapSettings) {
 		postLoadConfig = false;
 		// Format: Key = [TableID].column.[columnname]
-		// Value[] = { visible, width, position, autotooltip, sortorder, userData, align }
+		// Value[] = { visible, width, position, autotooltip, sortorder, userData, align, fg, bg, iconenabled }
 
 		String itemPrefix = "Column." + sName;
 		String oldItemPrefix = "Table." + sTableID + "." + sName;
@@ -1328,8 +1332,13 @@ public class TableColumnImpl
 				setBackgroundColor( new int[]{ bgList.get(0).intValue(), bgList.get(1).intValue(), bgList.get(2).intValue()});
 			}
 		}		
-		
+		pos++;
+		if (list.length >= (pos + 1) && (list[pos] instanceof Number)) {
+			boolean b = ((Number) list[pos]).intValue() != 0;
+			setIconReferenceEnabled(b);
+		}
 		firstLoad = list.length == 0;
+		isDirty = false;	// just loaded them, can't be dirty yet surely!
 		postConfigLoad();
 	}
 
@@ -1381,7 +1390,8 @@ public class TableColumnImpl
 			new Integer(lLastSortValueChange == 0 ? -1 : (bSortAscending ? 1 : 0)),
 			userData != null ? userData : Collections.EMPTY_MAP,
 			new Integer(iAlignment == iDefaultAlignment ? -1 : iAlignment),
-			fgList, bgList
+			fgList, bgList,
+			new Integer(iconIDEnabled?1:0),
 		}));
 		isDirty = false;
 		// cleanup old config
@@ -1671,10 +1681,30 @@ public class TableColumnImpl
 				}
 			}
 
+			boolean c0isStringSupplier = c0 instanceof StringSupplier;
+			boolean c1isStringSupplier = c1 instanceof StringSupplier;
+			if (c0isStringSupplier && c1isStringSupplier) {
+				String c0String = ((StringSupplier)c0).get();
+				String c1String = ((StringSupplier)c1).get();
+				if ( intiutiveSorting ){		
+					if (bSortAscending) {
+						return ( intuitiveComparator.compare( c0String, c1String ));
+					}
+	
+					return ( intuitiveComparator.compare( c1String, c0String ));
+				}else{
+					if (bSortAscending) {
+						return (c0String).compareToIgnoreCase(c1String);
+					}
+	
+					return (c1String).compareToIgnoreCase(c0String);
+				}
+			}
+			
 			int val;
-			if (c0isString && !c1isString) {
+			if ((c0isString && !c1isString) || (c0isStringSupplier && !c1isStringSupplier)) {
 				val = -1;
-			} else if (c1isString && !c0isString) {
+			} else if ( (c1isString && !c0isString) || (c1isStringSupplier && !c0isStringSupplier)) {
 				val = 1;
 			} else {
 				val = c1.compareTo(c0);
@@ -1862,6 +1892,21 @@ public class TableColumnImpl
 	}
 
 	@Override
+	public int
+	getPreferredHeaderWidth()
+	{
+		return( iPreferredHeaderWidth );
+	}
+	
+	@Override
+	public void
+	setPreferredHeaderWidth(
+		int		width )
+	{
+		iPreferredHeaderWidth = width;
+	}
+	
+	@Override
 	public void setAutoTooltip(boolean auto_tooltip) {
 		if (this.auto_tooltip != auto_tooltip) {
 			this.auto_tooltip = auto_tooltip;
@@ -1981,16 +2026,42 @@ public class TableColumnImpl
 	}
 
 	@Override
-	public void setIconReference(String iconID, boolean showOnlyIcon) {
+	public void 
+	setIconReference(
+		String	iconID, 
+		boolean showOnlyIcon ) 
+	{
 		this.iconID = iconID;
+		
 		this.showOnlyImage = showOnlyIcon;
 	}
 
 	@Override
-	public String getIconReference() {
-		return iconID;
+	public String 
+	getIconReference() 
+	{
+		return( iconID );
 	}
 
+	@Override
+	public void 
+	setIconReferenceEnabled(
+		boolean b )
+	{
+		if ( iconIDEnabled != b ){
+		
+			iconIDEnabled = b;
+			
+			markDirty();
+		}
+	}
+	
+	@Override
+	public boolean 
+	getIconReferenceEnabled()
+	{
+		return( iconIDEnabled );
+	}
 	@Override
 	public void setMinimumRequiredUserMode(int mode) {
 
@@ -2011,7 +2082,9 @@ public class TableColumnImpl
 
 
 	@Override
-	public boolean showOnlyImage() {
+	public boolean 
+	showOnlyImage() 
+	{
 		return showOnlyImage;
 	}
 

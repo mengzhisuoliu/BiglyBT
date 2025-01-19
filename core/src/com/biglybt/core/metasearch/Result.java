@@ -56,6 +56,7 @@ Result
 	public abstract int getNbPeers();
 	public abstract int getNbSeeds();
 	public abstract int getNbSuperSeeds();
+	public abstract int getNbCompleted();
 	public abstract int getComments();
 	public abstract int getVotes();
 	public abstract int getVotesDown();
@@ -77,6 +78,8 @@ Result
 	public abstract String getUID();
 	public abstract String getHash();
 
+	public abstract String getDescription();
+	
 	protected
 	Result(
 		Engine		_engine )
@@ -283,6 +286,13 @@ Result
 			object.put("p","-1");
 		}
 
+		int completed = getNbCompleted();
+		
+		if ( completed >= 0 ) {
+			
+			object.put( "gr", "" + completed);	// grabbed
+		}
+		
 		int	comments = getComments();
 
 		if ( comments >= 0 ){
@@ -489,7 +499,7 @@ Result
 		}
 	}
 
-	protected static String removeHTMLTags(String input) {
+	public static String removeHTMLTags(String input) {
 		if ( input == null ){
 			return( null );
 		}

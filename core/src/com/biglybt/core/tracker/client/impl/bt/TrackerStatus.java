@@ -34,6 +34,7 @@ import com.biglybt.core.internat.MessageText;
 import com.biglybt.core.logging.LogEvent;
 import com.biglybt.core.logging.LogIDs;
 import com.biglybt.core.logging.Logger;
+import com.biglybt.core.networkmanager.admin.NetworkAdmin;
 import com.biglybt.core.networkmanager.impl.tcp.TCPNetworkManager;
 import com.biglybt.core.networkmanager.impl.udp.UDPNetworkManager;
 import com.biglybt.core.proxy.AEProxyFactory;
@@ -179,38 +180,58 @@ public class TrackerStatus {
       String lc_trackerUrl = trackerUrl.toLowerCase(Locale.US);
 
       int position = trackerUrl.lastIndexOf('/');
-      if(	position >= 0 &&
-      		trackerUrl.length() >= position+9 &&
-      		trackerUrl.substring(position+1,position+9).equals("announce")) {
+      
+      List<String>	replaces = new ArrayList<>(2);
+      
+      replaces.add( "announce" );
+      
+   		// https://github.com/i2p/i2p.plugins.zzzot - accepts /a as well as /announce...
+      
+  	  if ( AENetworkClassifier.categoriseAddress( tracker_url.getHost()) == AENetworkClassifier.AT_I2P ){
+  		  
+  		replaces.add( "a" );
+  	  }
+  	  
+      for ( String rep: replaces ){
+    	  int repLen = rep.length();
+	      if(	position >= 0 &&
+	      		trackerUrl.length() >= position+repLen+1 &&
+	      		trackerUrl.substring(position+1,position+repLen+1).equals( rep )) {
+	
+	        scrapeURL = trackerUrl.substring(0,position+1) + "scrape" + trackerUrl.substring(position+repLen+1);
+	        // System.out.println( "url = " + trackerUrl + ", scrape =" + scrapeURL );
+	        
+	        break;
+	      }
+      }
 
-        this.scrapeURL = trackerUrl.substring(0,position+1) + "scrape" + trackerUrl.substring(position+9);
-        // System.out.println( "url = " + trackerUrl + ", scrape =" + scrapeURL );
-
-      }else if ( lc_trackerUrl.startsWith("udp:")){
-      		// UDP scrapes aren't based on URL rewriting, just carry on
-
-      	scrapeURL = trackerUrl;
-      }else if ( lc_trackerUrl.startsWith( "ws:" ) || lc_trackerUrl.startsWith( "wss:" )){
-
-    	  // websocket trackers
-
-    	  scrapeURL = trackerUrl;
-
-    	  bSingleHashScrapes = true;
-
-       }else if ( position >= 0 && trackerUrl.lastIndexOf('.') < position ){
-
-       		// some trackers support /scrape appended but don't have an /announce
-       		// don't do this though it the URL ends with .php (or infact .<anything>)
-
-       	scrapeURL = trackerUrl + (trackerUrl.endsWith("/")?"":"/") + "scrape";
-
-      } else {
-        if (!logged_invalid_urls.contains(trackerUrl)) {
-
-          logged_invalid_urls.add(trackerUrl);
-          // Error logging is done by the caller, since it has the hash/torrent info
-        }
+      if ( scrapeURL == null ){
+	      if ( lc_trackerUrl.startsWith("udp:")){
+	      		// UDP scrapes aren't based on URL rewriting, just carry on
+	
+	      	scrapeURL = trackerUrl;
+	      }else if ( lc_trackerUrl.startsWith( "ws:" ) || lc_trackerUrl.startsWith( "wss:" )){
+	
+	    	  // websocket trackers
+	
+	    	  scrapeURL = trackerUrl;
+	
+	    	  bSingleHashScrapes = true;
+	
+	       }else if ( position >= 0 && trackerUrl.lastIndexOf('.') < position ){
+	
+	       		// some trackers support /scrape appended but don't have an /announce
+	       		// don't do this though it the URL ends with .php (or infact .<anything>)
+	
+	       	scrapeURL = trackerUrl + (trackerUrl.endsWith("/")?"":"/") + "scrape";
+	
+	      } else {
+	        if (!logged_invalid_urls.contains(trackerUrl)) {
+	
+	          logged_invalid_urls.add(trackerUrl);
+	          // Error logging is done by the caller, since it has the hash/torrent info
+	        }
+	      }
       }
     } catch (Throwable e) {
     	Debug.printStackTrace( e );
@@ -488,7 +509,7 @@ public class TrackerStatus {
 						response.setStatus(TRTrackerScraperResponse.ST_SCRAPING,
 								MessageText.getString(SS + "scraping"));
 
-						// technically haven't recieved a scrape yet, but we need
+						// technically haven't received a scrape yet, but we need
 						// to notify listeners (the ones that display status)
 						scraper.scrapeReceived(response);
 
@@ -747,7 +768,7 @@ public class TrackerStatus {
 											+ new String(failure_reason_bytes,
 													Constants.DEFAULT_ENCODING_CHARSET));
 
-							// notifiy listeners
+							// notify listeners
 
 							scraper.scrapeReceived(response);
 						}
@@ -766,7 +787,7 @@ public class TrackerStatus {
 								response.setStatus(TRTrackerScraperResponse.ST_ERROR,
 										MessageText.getString(SS + "error")
 												+ MessageText.getString(SSErr + "invalid"));
-								// notifiy listeners
+								// notify listeners
 								scraper.scrapeReceived(response);
 							}
 						} else {
@@ -779,7 +800,7 @@ public class TrackerStatus {
 							response.setStatus(TRTrackerScraperResponse.ST_ERROR,
 									MessageText.getString(SS + "error")
 											+ MessageText.getString(SSErr + "nohash"));
-							// notifiy listeners
+							// notify listeners
 							scraper.scrapeReceived(response);
 						}
 					}
@@ -788,7 +809,7 @@ public class TrackerStatus {
 				}
 
 				/*
-				 * If we requested mutliple hashes, but only one was returned, revert
+				 * If we requested multiple hashes, but only one was returned, revert
 				 * to Single Hash Scrapes, but continue on to process the one has that
 				 * was returned (it may be a random one from the list)
 				 */
@@ -806,7 +827,7 @@ public class TrackerStatus {
 					// LGLogger.log( "decoding response #" +i+ ": " +
 					// ByteFormatter.nicePrint( response.getHash(), true ) );
 
-					// retrieve the scrape data for the relevent infohash
+					// retrieve the scrape data for the relevant infohash
 					Map scrapeMap = (Map) mapFiles.get(new String(response.getHash().getBytes(),
 							Constants.BYTE_ENCODING_CHARSET));
 
@@ -820,7 +841,7 @@ public class TrackerStatus {
 							response.setStatus(TRTrackerScraperResponse.ST_ERROR,
 									MessageText.getString(SS + "error")
 											+ MessageText.getString(SSErr + "nohash"));
-							// notifiy listeners
+							// notify listeners
 							scraper.scrapeReceived(response);
 						} else if ( scraper.isTorrentScrapable(response.getHash())) {
 							// This tracker doesn't support multiple hash requests.
@@ -859,7 +880,7 @@ public class TrackerStatus {
 								}
 
 							}
-							// notifiy listeners
+							// notify listeners
 							scraper.scrapeReceived(response);
 
 							// if this was the first scrape request in the list,
@@ -876,7 +897,7 @@ public class TrackerStatus {
 						Long l_peers 	= (Long)scrapeMap.get("incomplete");
 						Long l_comp 	= (Long)scrapeMap.get("downloaded");
 
-						int seeds 		= l_seeds==null?0:l_seeds.intValue();	// expected but deal with missing as some trackers ommit :(
+						int seeds 		= l_seeds==null?0:l_seeds.intValue();	// expected but deal with missing as some trackers omit :(
 						int peers 		= l_peers==null?0:l_peers.intValue();	// expected but deal with missing
 						int completed 	= l_comp==null?-1:l_comp.intValue();	// optional
 
@@ -940,7 +961,7 @@ public class TrackerStatus {
 						response.setStatus(TRTrackerScraperResponse.ST_ONLINE,
 								MessageText.getString(SS + "ok"));
 
-						// notifiy listeners
+						// notify listeners
 						scraper.scrapeReceived(response);
 
 						try{
@@ -978,7 +999,7 @@ public class TrackerStatus {
 					response.setStatus(TRTrackerScraperResponse.ST_ERROR, MessageText
 							.getString(SS + "error")
 							+ ignoreSSL.getMessage());
-					// notifiy listeners
+					// notify listeners
 					scraper.scrapeReceived(response);
 				}
 			} catch (FileNotFoundException e) {
@@ -988,7 +1009,7 @@ public class TrackerStatus {
 					response.setStatus(TRTrackerScraperResponse.ST_ERROR, MessageText
 							.getString(SS + "error")
 							+ MessageText.getString("DownloadManager.error.filenotfound"));
-					// notifiy listeners
+					// notify listeners
 					scraper.scrapeReceived(response);
 				}
 			} catch (SocketException e) {
@@ -1061,7 +1082,7 @@ public class TrackerStatus {
 					response.setStatus(TRTrackerScraperResponse.ST_ERROR, MessageText
 							.getString(SS + "error")
 							+ msg);
-					// notifiy listeners
+					// notify listeners
 					scraper.scrapeReceived(response);
 				}
 			}
@@ -1111,7 +1132,7 @@ public class TrackerStatus {
 					+ FAULTY_SCRAPE_RETRY_INTERVAL);
 			response.setStatus(TRTrackerScraperResponse.ST_ERROR,StringInterner.intern(
 					MessageText.getString(SS + "error") + msg ));
-			// notifiy listeners
+			// notify listeners
 			scraper.scrapeReceived(response);
 		}
 	}
@@ -1594,8 +1615,19 @@ public class TrackerStatus {
 
 		Throwable last_error = null;
 
+		boolean ipv6_enabled =  NetworkAdmin.getSingleton().isIPV6Enabled();
+
+		boolean all_skipped = true;
+
 		for ( InetSocketAddress destination: url_addresses ){
 
+			if ( destination.getAddress() instanceof Inet6Address && !ipv6_enabled ){
+
+				continue;
+			}
+			
+			all_skipped = false;
+			
 			try{
 				PRUDPPacketHandler handler = PRUDPPacketHandlerFactory.getHandler( handler_port );
 
@@ -1750,6 +1782,11 @@ public class TrackerStatus {
 			}
 		}
 
+		if ( all_skipped ){
+
+			throw( new Exception( "IPv6 disabled" ));
+		}
+ 			
 		if ( last_error != null ){
 			
 			throw( last_error );
@@ -1828,7 +1865,7 @@ public class TrackerStatus {
   		hashes_mon.exit();
   	}
 
-  		//notifiy listeners
+  		//notify listeners
 
     scraper.scrapeReceived( response );
 

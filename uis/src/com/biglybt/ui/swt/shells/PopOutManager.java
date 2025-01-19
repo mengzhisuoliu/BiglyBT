@@ -27,11 +27,14 @@ import java.util.Map;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.widgets.Shell;
 
+import com.biglybt.core.Core;
 import com.biglybt.core.download.DownloadManager;
 import com.biglybt.core.tag.Tag;
 import com.biglybt.core.util.BDecoder;
+import com.biglybt.core.util.DataSourceResolver.ExportableDataSource;
 import com.biglybt.core.util.Debug;
 import com.biglybt.core.util.FileUtil;
+import com.biglybt.pif.PluginAdapter;
 import com.biglybt.pif.download.Download;
 import com.biglybt.ui.UIFunctions;
 import com.biglybt.ui.UIFunctionsManager;
@@ -89,9 +92,23 @@ PopOutManager
 	private static List<PopOutDetails>	popout_details = new ArrayList<>();
 	
 	public static void
-	initialise()
+	initialise(
+		Core		core )
 	{
-		Utils.execSWTThread( PopOutManager::loadConfig );
+			// wait until all plugins are initialised as they may register views and this must
+			// be done before recovering any pop-outs
+		
+		core.getPluginManager().getDefaultPluginInterface().addListener(
+			new PluginAdapter()
+			{
+				@Override
+				public void initializationComplete()
+				{
+					Utils.execSWTThread( PopOutManager::loadConfig );
+				}		
+			});
+		
+		
 	}
 	
 	private static synchronized void
@@ -368,7 +385,8 @@ PopOutManager
 	private static boolean
 	getOption(
 		Map<String,Object>	map,
-		String				opt )
+		String				opt,
+		boolean				def )
 	{
 		if ( map != null ){
 			
@@ -380,16 +398,51 @@ PopOutManager
 			}
 		}
 		
-		return( false );
+		return( def );
 	}
 	
 	public static boolean
 	popOut(
 		SideBarEntrySWT		entry,
-		Map<String,Object>	options )
+		Map<String,Object>	default_options )
 	{
-		boolean onTop	= getOption( options, OPT_ON_TOP );
-		boolean canMin	= getOption( options, OPT_CAN_MINIMIZE );
+		Boolean onTop 	= null;
+		Boolean canMin	= null;
+		
+		Object oeds = entry.getExportableDatasource();
+		
+		ExportableDataSource	eds = null;
+		
+		if ( oeds instanceof ExportableDataSource ){
+			
+			eds = (ExportableDataSource)oeds;
+			
+		}else{
+			
+			Object ds = entry.getDatasource();
+			
+			if ( ds instanceof ExportableDataSource ){
+				
+				eds = (ExportableDataSource)ds;
+			}
+		}
+		
+		if ( eds != null ){
+			
+			onTop	= eds.getBooleanOption( ExportableDataSource.OPT_ON_TOP );
+			
+			canMin	= eds.getBooleanOption( ExportableDataSource.OPT_CAN_MINIMIZE );
+		}
+		
+		if ( onTop == null ){
+			
+			onTop = getOption( default_options, OPT_ON_TOP, false );
+		}
+		
+		if ( canMin == null ){
+			
+			canMin	= getOption( default_options, OPT_CAN_MINIMIZE, false );
+		}
 		
 		int style = STYLE_DEFAULT;
 		
@@ -447,11 +500,46 @@ PopOutManager
 	public static boolean
 	popOut(
 		TabbedEntry				entry,
-		Map<String,Object>		options )
+		Map<String,Object>		default_options )
 	{
-		boolean onTop	= getOption( options, OPT_ON_TOP );
-		boolean canMin	= getOption( options, OPT_CAN_MINIMIZE );
-
+		Boolean onTop 	= null;
+		Boolean canMin	= null;
+		
+		Object oeds = entry.getExportableDatasource();
+		
+		ExportableDataSource	eds = null;
+		
+		if ( oeds instanceof ExportableDataSource ){
+			
+			eds = (ExportableDataSource)oeds;
+			
+		}else{
+			
+			Object ds = entry.getDatasource();
+			
+			if ( ds instanceof ExportableDataSource ){
+				
+				eds = (ExportableDataSource)ds;
+			}
+		}
+		
+		if ( eds != null ){
+			
+			onTop	= eds.getBooleanOption( ExportableDataSource.OPT_ON_TOP );
+			
+			canMin	= eds.getBooleanOption( ExportableDataSource.OPT_CAN_MINIMIZE );
+		}
+		
+		if ( onTop == null ){
+			
+			onTop = getOption( default_options, OPT_ON_TOP, false );
+		}
+		
+		if ( canMin == null ){
+			
+			canMin	= getOption( default_options, OPT_CAN_MINIMIZE, false );
+		}
+		
 		int style = STYLE_DEFAULT;
 		
 		if ( canMin ){

@@ -81,6 +81,7 @@ import com.biglybt.core.logging.Logger;
 import com.biglybt.core.networkmanager.NetworkManager;
 import com.biglybt.core.networkmanager.impl.tcp.TCPNetworkManager;
 import com.biglybt.core.peer.PEPeerManager;
+import com.biglybt.core.peer.util.PeerUtils;
 import com.biglybt.core.peermanager.control.PeerControlSchedulerFactory;
 import com.biglybt.core.speedmanager.SpeedManager;
 import com.biglybt.core.speedmanager.impl.SpeedManagerImpl;
@@ -123,6 +124,7 @@ import com.biglybt.core.util.DelayedEvent;
 import com.biglybt.core.util.FileUtil;
 import com.biglybt.core.util.FrequencyLimitedDispatcher;
 import com.biglybt.core.util.HashWrapper;
+import com.biglybt.core.util.IdentityHashSet;
 import com.biglybt.core.util.IndentWriter;
 import com.biglybt.core.util.ListenerManager;
 import com.biglybt.core.util.ListenerManagerDispatcher;
@@ -244,10 +246,13 @@ public class GlobalManagerImpl
 	static boolean disable_never_started_scrapes;
 
 	static int		no_space_dl_restart_check_period_millis;
+	static long		no_space_dl_pause_min_bytes;
 
-	static int		missing_file_dl_restart_check_period_millis;
-	static Object	missing_file_dl_restart_key = new Object();
+	static int			missing_file_dl_restart_check_period_millis;
+	static final Object	missing_file_dl_restart_key = new Object();
 	
+	static final Object ACTIVE_KEY = new Object();
+
 	static{
 		 COConfigurationManager.addAndFireParameterListeners(
 			new String[]{
@@ -545,6 +550,28 @@ public class GlobalManagerImpl
         		}
         	}
 
+        	if ( no_space_dl_pause_min_bytes > 0 ){
+        		
+           		DownloadManager[] managers = managers_list_cow;
+    			
+        		for ( DownloadManager manager: managers ){
+        			
+        			if ( manager.getState() == DownloadManager.STATE_DOWNLOADING ){
+        				
+        				File save_loc = manager.getSaveLocation();
+        						
+        				long avail = FileUtil.getUsableSpace( save_loc );
+        				
+        				if ( avail >= 0 && avail < no_space_dl_pause_min_bytes ){
+        					
+        					manager.pause( true );
+        					
+							manager.setStopReason( "Insufficient space on '" + save_loc.getAbsolutePath() + "'" );
+        				}
+        			}
+        		}
+        	}
+        	
            	if ( missing_file_dl_restart_check_period_millis > 0 ){
 
     			long now = SystemTime.getMonotonousTime();
@@ -671,6 +698,8 @@ public class GlobalManagerImpl
   	AEDiagnostics.addWeakEvidenceGenerator( this );
 
   	DataSourceResolver.registerExporter( this );
+  	
+  	PeerUtils.initialise();
   	
     stats = new GlobalManagerStatsImpl( this );
 
@@ -1004,6 +1033,22 @@ public class GlobalManagerImpl
     	});
 
     file_merger = new GlobalManagerFileMerger( this );
+    
+    COConfigurationManager.addParameterListener(
+    	ConfigKeys.Transfer.ICFG_SET_FILE_PRIORITY_REM_PIECE,
+    	(n)->{
+    		for ( DownloadManager dm: managers_list_cow ){
+    			
+    			try{
+    				
+    				dm.syncGlobalConfig();
+    				
+    			}catch( Throwable e ){
+    				
+    				Debug.out( e );
+    			}
+    		}
+    	});
   }
 
   @Override
@@ -1240,6 +1285,8 @@ public class GlobalManagerImpl
 						
 						if ( temp.isDirectory()){
 							
+							FileUtil.log( "addDownload: temporary save path '" + path + "' substituted for '" + savePath  + "'" );
+									
 							moc	= FileUtil.newFile( savePath );
 							
 							savePath = temp.getAbsolutePath();
@@ -1669,7 +1716,7 @@ public class GlobalManagerImpl
 					   if ( bCompleted && (lDownloadedValue == 0)){
 
 						   //Gudy : I say if the torrent is complete, let's simply set downloaded
-						   //to size in order to see a meaningfull share-ratio
+						   //to size in order to see a meaningful share-ratio
 						   //Gudy : Bypass this horrible hack, and I don't care of first priority seeding...
 						   /*
 		            if (lDownloadedValue != 0 && ((lUploadedValue * 1000) / lDownloadedValue < minQueueingShareRatio) )
@@ -1805,7 +1852,7 @@ public class GlobalManagerImpl
 
 				   if ( host_support != null ){
 
-					   host_support.torrentAdded( download_manager.getTorrentFileName(), download_manager.getTorrent());
+					   host_support.torrentAdded( download_manager );
 				   }
 			   }
 
@@ -2060,7 +2107,7 @@ public class GlobalManagerImpl
 
 	  if ( host_support != null ){
 
-		  host_support.torrentRemoved( manager.getTorrentFileName(), torrent);
+		  host_support.torrentRemoved( manager, torrent);
 	  }
 
 	  // delete the state last as passivating a hosted torrent may require access to
@@ -3351,7 +3398,7 @@ public class GlobalManagerImpl
 
           if ( host_support != null ){
 
-          	host_support.torrentAdded( dm.getTorrentFileName(), dm.getTorrent());
+          	host_support.torrentAdded( dm );
           }
 	  }
 
@@ -3408,7 +3455,7 @@ public class GlobalManagerImpl
 			  }
 		  }
 		  
-		  state = DownloadManager.STATE_STOPPED;	// keep stopped rather than error state for the moment for backwards compatability
+		  state = DownloadManager.STATE_STOPPED;	// keep stopped rather than error state for the moment for backwards compatibility
 
 	  }else if (	dm.getAssumedComplete() && !dm.isForceStart() &&
 			  state != DownloadManager.STATE_STOPPED) {
@@ -3696,6 +3743,13 @@ public class GlobalManagerImpl
 			  int				newPosition = newPositions.get( i );
 
 			  int[] manager_entry = (int[])manager.getUserData( MOVE_POS_KEY );
+			  
+			  if ( manager_entry == null ){
+				  
+				  Debug.out( "DM not found in global list" );
+				  
+				  return;
+			  }
 			  
 			  int oldPosition = manager_entry[0];
 			  
@@ -4682,7 +4736,7 @@ public class GlobalManagerImpl
 
 											File base_file = fileInfo.getFile( false );
 
-											File existing_link = state.getFileLink( i, base_file );
+											File existing_link = state.getFileLink( i );
 
 											if ( existing_link == null && base_file.exists()){
 
@@ -4755,7 +4809,7 @@ public class GlobalManagerImpl
 
 				File base_file = fileInfo.getFile(false);
 
-				File existing_link = state.getFileLink( i, base_file);
+				File existing_link = state.getFileLink( i );
 
 				if (existing_link == null && !base_file.exists()) {
 
@@ -4880,7 +4934,7 @@ public class GlobalManagerImpl
 					try{
 						writer.indent();
 	
-						manager.generateEvidence( writer );
+						manager.generateEvidence( writer, false );
 	
 					}finally{
 	
@@ -5451,7 +5505,7 @@ public class GlobalManagerImpl
 		{
 			synchronized( this ){
 
-				Set<DownloadManager> active 	= new HashSet<>(tag_active.getTaggedDownloads());
+				Set<DownloadManager> active 	= new IdentityHashSet<>(tag_active.getTaggedDownloads());
 
 				for ( TagDownloadWithState tag: new TagDownloadWithState[]{ tag_downloading, tag_seeding }){
 
@@ -5459,8 +5513,15 @@ public class GlobalManagerImpl
 
 						DownloadManagerStats stats = dm.getStats();
 
+						long total_data = stats.getTotalDataBytesReceived() + stats.getTotalDataBytesSent();
+							
+						Long old = (Long)dm.getUserData( ACTIVE_KEY );
+						
+						dm.setUserData( ACTIVE_KEY, total_data );
+						
 						boolean is_active =
-							stats.getDataReceiveRate() + stats.getDataSendRate() > 0 &&
+							(	stats.getDataReceiveRate() + stats.getDataSendRate() > 0 ||
+								old != null && old != total_data ) &&
 							!dm.isDestroyed();
 
 						if ( is_active ){
@@ -5566,6 +5627,8 @@ public class GlobalManagerImpl
 			{
 				super( DownloadStateTagger.this, tag_id, name, do_rates, do_up, do_down, do_bytes, run_states );
 
+				setGroup( MessageText.getString( "tag.type.ds" ));
+				
 				addTag();
 			}
 

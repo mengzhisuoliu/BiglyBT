@@ -38,7 +38,6 @@ import com.biglybt.core.util.*;
 import com.biglybt.pifimpl.local.PluginCoreUtils;
 import com.biglybt.pifimpl.local.PluginInitializer;
 import com.biglybt.pifimpl.local.ui.UIManagerImpl;
-import com.biglybt.plugin.net.buddy.swt.FriendsView;
 import com.biglybt.ui.UIFunctions;
 import com.biglybt.ui.UIFunctionsManager;
 import com.biglybt.ui.UIFunctionsUserPrompter;
@@ -53,6 +52,7 @@ import com.biglybt.ui.swt.imageloader.ImageLoader;
 import com.biglybt.ui.swt.pif.*;
 import com.biglybt.ui.swt.pif.UISWTViewBuilder.UISWTViewEventListenerInstantiator;
 import com.biglybt.ui.swt.pifimpl.*;
+import com.biglybt.ui.swt.plugin.net.buddy.swt.FriendsView;
 import com.biglybt.ui.swt.skin.*;
 import com.biglybt.ui.swt.views.ViewManagerSWT;
 import com.biglybt.ui.swt.views.skin.SkinnedDialog;
@@ -584,14 +584,16 @@ public abstract class BaseMdiEntry
 			ViewTitleInfoManager.addListener(this);
 
 			if (getEventListener() == null && (viewTitleInfo instanceof UISWTViewEventListener)) {
-				if (getSkinRef() == null) {
-					// TODO Remove this debug
-					System.out.println(
+				UISWTViewEventListener listener = (UISWTViewEventListener) viewTitleInfo;
+				
+				if (getSkinRef() == null && !listener.builderNotRequired()){
+					
+					Debug.out(
 							"Setting event listener because viewTitleInfo instance of UISWTViewEventListener.  Might lose builder info. "
 									+ getViewID() + " via " + Debug.getCompressedStackTrace());
 				}
 				try {
-					setEventListener((UISWTViewEventListener) viewTitleInfo, null, true);
+					setEventListener(listener, null, true);
 				} catch (UISWTViewEventCancelledException ignore) {
 				}
 			}
@@ -1002,7 +1004,7 @@ public abstract class BaseMdiEntry
 		String imageID = (String) viewTitleInfo.getTitleInfoProperty(ViewTitleInfo.TITLE_IMAGEID);
 		
 			// don't overwrite any any existing (probably statically assigned) image id with a
-			// ViewTitleInfo that doesn't bother returning anythign better
+			// ViewTitleInfo that doesn't bother returning anything better
 		
 		if ( imageID != null ){
 			if ( imageID.length() == 0 ){
@@ -1250,6 +1252,54 @@ public abstract class BaseMdiEntry
 		
 		result.put( "title", title );
 		
+		String title_id = getTitleID();
+		
+		if ( title_id != null && !title_id.isEmpty()){
+
+			boolean ok = false;
+			
+			if ( title_id.startsWith( "!" ) && title_id.endsWith( "!" )){
+			
+				String id = getId();
+
+				if ( MessageText.keyExists( id )){
+					
+					title_id = id;
+					
+					ok = true;
+					
+				}else{
+				
+					String test = id + ".title.full";
+	
+					if ( MessageText.keyExists( test )){
+						
+						title_id = test;
+						
+						ok = true;
+					}
+				}
+			}
+			
+			if ( ok || MessageText.keyExists( title_id )){
+				
+				result.put( "title_id", title_id );
+			}
+		}
+		
+		if ( !result.containsKey( "title_id" )){
+			
+			if ( vti != null ){
+				
+				title_id = (String)vti.getTitleInfoProperty( ViewTitleInfo.TITLE_TEXT_ID );
+				
+				if ( title_id != null && MessageText.keyExists( title_id )){
+				
+					result.put( "title_id", title_id );
+				}
+			}
+		}
+		
 		result.put( "skin_ref", getSkinRef());
 		
 		result.put( "skin_id", skin.getSkinID());
@@ -1263,6 +1313,11 @@ public abstract class BaseMdiEntry
 		if ( data_source == null ) {
 		
 			data_source = getInitialDataSource();
+		}
+		
+		if ( data_source == null ){
+			
+			data_source = getUserData( UD_STANDALONE_DATA_SOURCE );
 		}
 		
 		if ( data_source != null ) {
@@ -1326,13 +1381,20 @@ public abstract class BaseMdiEntry
 	buildStandAlone(
 		SWTSkinObjectContainer		soParent )
 	{
+		Object data_source = getDatasourceCore();
+
+		if ( data_source == null ){
+
+			data_source = getUserData( UD_STANDALONE_DATA_SOURCE );
+		}
+		
 		return(
 			buildStandAlone(
 				soParent,
 				getSkinRef(),
 				skin,
 				id,
-				getDatasourceCore(),
+				data_source,
 				getControlType(),
 				getEventListenerBuilder() ));
 	}
@@ -1487,6 +1549,7 @@ public abstract class BaseMdiEntry
 								data_source = new String[]{(String) args.get(0), (String) args.get(1)};
 								break;
 							case "com.biglybt.plugin.net.buddy.swt.BuddyPluginView":
+							case "com.biglybt.ui.swt.plugin.net.buddy.swt.BuddyPluginView":
 								cla = FriendsView.class;
 								pi = pluginManager.getPluginInterfaceByID("azbuddy");
 								break;

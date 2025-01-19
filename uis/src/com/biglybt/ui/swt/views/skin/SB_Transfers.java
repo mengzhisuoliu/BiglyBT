@@ -103,8 +103,20 @@ public class SB_Transfers
 
 	private static final String ID_VITALITY_ALERT = "image.sidebar.vitality.alert";
 	private final HasBeenOpenedListener hasBeenOpenedListener;
-
-	private CategoryListener categoryListener;
+	
+	private final CategoryListener categoryListener = 
+		new CategoryListener() {
+		@Override
+			public void downloadManagerRemoved(Category cat, DownloadManager removed) {
+				RefreshCategorySideBar(cat);
+			}
+	
+			@Override
+			public void downloadManagerAdded(Category cat, DownloadManager manager) {
+				RefreshCategorySideBar(cat);
+			}
+	};
+	
 	private DownloadManagerListener dmListener;
 	private GlobalManagerAdapter gmListener;
 	private TimerEventPeriodic timerEventPeriodic;
@@ -473,7 +485,7 @@ public class SB_Transfers
 		
 		infoLibraryUn.setImageLeftID("image.sidebar.unopened");
 
-		addGeneralLibraryMenus(mdi,SideBar.SIDEBAR_SECTION_LIBRARY_UNOPENED);
+		addGeneralLibraryMenus(mdi, infoLibraryUn, SideBar.SIDEBAR_SECTION_LIBRARY_UNOPENED);
 		
 		infoLibraryUn.setViewTitleInfo(new ViewTitleInfo() {
 			@Override
@@ -506,21 +518,29 @@ public class SB_Transfers
 		
 		return infoLibraryUn;
 	}
-
-	private static void addGeneralLibraryMenus( MultipleDocumentInterface mdi, String id ){
-
-		addMenuUnwatched( id );
+	
+	private static void 
+	addGeneralLibraryMenus( 
+		MultipleDocumentInterface mdi, MdiEntry entry, String id )
+	{		
+		MenuItem mi1 = addMenuUnwatched( id );
 		
-		addMenuCollapseAll( mdi, id );
+		MenuItem mi2 = addMenuCollapseAll( mdi, id );
+		
+		entry.addListener((MdiCloseListener)(e,u)->{
+			mi1.remove();
+			mi2.remove();
+		});
 	}
 	
-	private static void addMenuUnwatched(String id) {
+	
+	private static MenuItem addMenuUnwatched(String id) {
 		PluginInterface pi = PluginInitializer.getDefaultInterface();
 		UIManager uim = pi.getUIManager();
 		MenuManager menuManager = uim.getMenuManager();
 
-		MenuItem menuItem = menuManager.addMenuItem("sidebar." + id,
-				"v3.activity.button.watchall");
+		MenuItem menuItem = menuManager.addMenuItem("sidebar." + id, "v3.activity.button.watchall");
+
 		menuItem.setDisposeWithUIDetach(UIInstance.UIT_SWT);
 		menuItem.addListener(new MenuItemListener() {
 			@Override
@@ -543,6 +563,8 @@ public class SB_Transfers
 						});
 			}
 		});
+		
+		return( menuItem );
 	}
 	
 	private static void
@@ -570,7 +592,10 @@ public class SB_Transfers
 	}
 
 
-	private static void addMenuCollapseAll( MultipleDocumentInterface mdi, String id ){
+	private static MenuItem 
+	addMenuCollapseAll( 
+		MultipleDocumentInterface mdi, String id )
+	{
 		PluginInterface pi = PluginInitializer.getDefaultInterface();
 		UIManager uim = pi.getUIManager();
 		MenuManager menuManager = uim.getMenuManager();
@@ -592,9 +617,14 @@ public class SB_Transfers
 							
 			}
 		});
+		
+		return( menuItem );
 	}
 	
-	private static void addMenuCollapseAll( MultipleDocumentInterface mdi,  Menu menu, String group_id ){
+	private static void 
+	addMenuCollapseAll( 
+		MultipleDocumentInterface mdi,  Menu menu, String group_id )
+	{
 		org.eclipse.swt.widgets.MenuItem item = new org.eclipse.swt.widgets.MenuItem( menu, SWT.PUSH );
 		
 		item.setText( MessageText.getString( "menu.collapse.all" ));
@@ -639,7 +669,7 @@ public class SB_Transfers
 				titleInfoSeeding, null, false, getSectionPosition( mdi, SideBar.SIDEBAR_SECTION_LIBRARY_CD ));
 		entry.setImageLeftID("image.sidebar.downloading");
 
-		addGeneralLibraryMenus(mdi,SideBar.SIDEBAR_SECTION_LIBRARY_CD);
+		addGeneralLibraryMenus(mdi, entry, SideBar.SIDEBAR_SECTION_LIBRARY_CD);
 		
 		MdiEntryVitalityImage vitalityImage = entry.addVitalityImage(ID_VITALITY_ALERT);
 		vitalityImage.setVisible(false);
@@ -718,7 +748,7 @@ public class SB_Transfers
 
 		entry.setImageLeftID("image.sidebar.downloading");
 
-		addGeneralLibraryMenus(mdi,SideBar.SIDEBAR_SECTION_LIBRARY_DL);
+		addGeneralLibraryMenus(mdi, entry, SideBar.SIDEBAR_SECTION_LIBRARY_DL);
 		
 		entry.addListener(
 			new MdiCloseListener(){
@@ -770,8 +800,9 @@ public class SB_Transfers
 	}
 
 	protected void
-	setupViewTitleWithCore(Core _core) {
-
+	setupViewTitleWithCore(
+		Core _core) 
+	{
 		synchronized( SB_Transfers.class ){
 			if (!first) {
 				return;
@@ -781,19 +812,6 @@ public class SB_Transfers
 			core			= _core;
 			coreCreateTime 	= core.getCreateTime();
 		}
-
-		categoryListener = new CategoryListener() {
-
-			@Override
-			public void downloadManagerRemoved(Category cat, DownloadManager removed) {
-				RefreshCategorySideBar(cat);
-			}
-
-			@Override
-			public void downloadManagerAdded(Category cat, DownloadManager manager) {
-				RefreshCategorySideBar(cat);
-			}
-		};
 
 		paramCatInSidebarListener = new ParameterListener() {
 			@Override
@@ -1133,7 +1151,7 @@ public class SB_Transfers
 					}
 				});
 	}
-
+	
 	private void
 	resetStats(
 		GlobalManager				gm,
@@ -1297,7 +1315,7 @@ public class SB_Transfers
 		if (mdi == null) {
 			return(null);
 		}
-
+		
 		String name = category.getName();
 		String id = "Cat." + Base32.encode(name.getBytes());
 		
@@ -1375,7 +1393,7 @@ public class SB_Transfers
 
 			entry.setUserData( CAT_KEY, category );
 			
-			addGeneralLibraryMenus( mdi, id );
+			addGeneralLibraryMenus( mdi, entry, id );
 			
 			entry.addListener(new MdiEntryDropListener() {
 				@Override
@@ -1446,6 +1464,23 @@ public class SB_Transfers
 
 		// tag stuff
 
+	private boolean
+	isTagVisible(
+		Tag		tag )
+	{
+		boolean visible = tag.isVisible();
+		
+		if ( visible ){
+			
+			if ( tag.isHiddenWhenEmpty() && tag.getTaggedCount() == 0 ){
+				
+				visible = false;
+			}
+		}
+		
+		return( visible );
+	}
+	
 	private void refreshTagSideBar(Tag tag) {
 		UIFunctions uiFunctions = UIFunctionsManager.getUIFunctions();
 		MultipleDocumentInterface mdi = uiFunctions != null ? uiFunctions.getMDI() : null;
@@ -1459,7 +1494,7 @@ public class SB_Transfers
 
 		if ( entry == null ){
 
-			if ( tag.isVisible()){
+			if ( isTagVisible(tag)){
 
 				setupTag( tag );
 			}
@@ -1467,7 +1502,7 @@ public class SB_Transfers
 			return;
 		}
 
-		if ( !tag.isVisible()){
+		if ( !isTagVisible(tag)){
 
 			closeTagView( tag);
 
@@ -1555,6 +1590,11 @@ public class SB_Transfers
 	setupTag(
 		final Tag tag )
 	{
+		if ( tag.isTagRemoved()){
+			
+			return( null );
+		}
+		
 		MultipleDocumentInterfaceSWT mdi = UIFunctionsManagerSWT.getUIFunctionsSWT().getMDISWT();
 
 		if ( mdi == null ){
@@ -1563,6 +1603,11 @@ public class SB_Transfers
 		}
 		
 		if ( !show_tag_tab_views ){
+			
+			return( null );
+		}
+		
+		if ( !isTagVisible(tag)){
 			
 			return( null );
 		}
@@ -1720,9 +1765,14 @@ public class SB_Transfers
 									boolean closed;
 									
 									public void 
-									mdiChildEntryClosed(MdiEntry parent, MdiEntry child, boolean user){
+									mdiChildEntryClosed(
+										MdiEntry parent, 
+										MdiEntry child, 
+										boolean user)
+									{
 									
 										String viewID = parent.getViewID();
+										
 										if (mdi.getChildrenOf(viewID).isEmpty()) {
 									
 											synchronized( this ){
@@ -1744,7 +1794,6 @@ public class SB_Transfers
 										}
 									}
 								});
-
 
 							if ( entry instanceof MdiEntrySWT ){
 								final MdiEntrySWT entrySWT = (MdiEntrySWT) entry;
@@ -1848,8 +1897,8 @@ public class SB_Transfers
 				entry = mdi.createEntryFromSkinRef(
 						parent_id, id, "library", name, viewTitleInfo, tag, closable, prev_id );
 				
-				addGeneralLibraryMenus( mdi, id );
-				
+				addGeneralLibraryMenus( mdi, entry, id );
+
 			}else{
 
 				UISWTViewBuilderCore builder = new UISWTViewBuilderCore(id, null,
@@ -2399,7 +2448,10 @@ public class SB_Transfers
 		
 			closeTagView( tag);
 		
-			setupTag( tag );
+			if ( isTagVisible(tag)){
+			
+				setupTag( tag );
+			}
 		}
 	}
 	
@@ -2733,7 +2785,9 @@ public class SB_Transfers
 			
 			Tag tag = (Tag)ds;
 			
-			if ( tag.getTagType().getTagType() == TagType.TT_DOWNLOAD_MANUAL ){
+			int tt = tag.getTagType().getTagType();
+					
+			if ( tt == TagType.TT_DOWNLOAD_MANUAL || tt == TagType.TT_DOWNLOAD_STATE ){
 			
 				return( "Tag_" + ((Tag)ds).getTagUID());
 			}
@@ -2862,7 +2916,7 @@ public class SB_Transfers
 				public void tagTypeChanged(TagType tag_type) {
 					for (Tag tag : tag_type.getTags()) {
 
-						if (tag.isVisible()) {
+						if (isTagVisible(tag)) {
 
 							setupTag(tag);
 
@@ -2900,7 +2954,7 @@ public class SB_Transfers
 
 				public void tagAdded(Tag tag) {
 					synchronized (tag_listener_lock) {
-						if (tag.isVisible() && tagListener != null) {
+						if (isTagVisible(tag) && tagListener != null) {
 
 							setupTag(tag);
 
@@ -3104,7 +3158,7 @@ public class SB_Transfers
 					"");
 			entry.setImageLeftID("image.sidebar.library");
 			
-			addGeneralLibraryMenus(mdi,SideBar.SIDEBAR_SECTION_LIBRARY);
+			addGeneralLibraryMenus( mdi, entry, SideBar.SIDEBAR_SECTION_LIBRARY);
 
 			return entry;
 		}

@@ -163,9 +163,7 @@ SubscriptionImpl
 	private List<String>	depends_on;
 	private String			exec_on_new_result;
 	
-	private AtomicLong		newest_result_time_next = new AtomicLong(1);
-	private volatile long	newest_result_time_seq;
-	private volatile long	newest_result_time;
+	private volatile long	latest_unread_result_time = -1;
 	
 	private AtomicLong		md_mutator = new AtomicLong( RandomUtils.nextAbsoluteLong());
 
@@ -2411,12 +2409,23 @@ SubscriptionImpl
 	fireChanged(
 		int		reason )
 	{
+		fireChanged( reason, true );
+	}
+	
+	protected void
+	fireChanged(
+		int			reason,
+		boolean		persistent )
+	{
 		if ( reason == SubscriptionListener.CR_METADATA ){
 			
 			md_mutator.incrementAndGet();
 		}
 		
-		manager.configDirty( this, reason );
+		if ( persistent ){
+		
+			manager.configDirty( this, reason );
+		}
 
 		listeners.dispatch( LT_SUBSCRIPTION_CHANGED, new Object[]{ this, reason });
 	}
@@ -2559,47 +2568,27 @@ SubscriptionImpl
 	}
 
 	protected void
-	invalidateNewestResultTime()
+	setNewestUnreadResultTime(
+		long t )
 	{
-		newest_result_time_next.incrementAndGet();
+		latest_unread_result_time = t;
 	}
 	
-	public long
-	getNewestResultTime()
-	{
-		long latest = newest_result_time;
-		long seq	= newest_result_time_seq;
-		
-		long next = newest_result_time_next.get();
-		
-		if ( newest_result_time_seq == next ){
-			
-			return( latest );
-		}
-				
-		latest = 0;
-		
-		SubscriptionResult[] results = getResults(false);
-			
-		for ( SubscriptionResult result : results ){
-			
-			if ( result.isDeleted() || result.getRead()){
-				
-				continue;
-			}
-			
-			long timeFound = result.getTimeFound();
-			
-			if ( timeFound > latest ){
-				
-				latest = timeFound;
-			}
-		}
+	private static AsyncDispatcher disp = new AsyncDispatcher( "SubsResultLoader" );
 	
-		newest_result_time		= latest;
-		newest_result_time_seq	= next;
+	public long
+	getNewestUnreadResultTime()
+	{
+		if ( latest_unread_result_time == -1 ){
+	
+			latest_unread_result_time = 0;
+			
+			disp.dispatch(()->{
+				getHistory().getResults( false );
+			});	
+		}
 		
-		return( latest );
+		return( latest_unread_result_time );
 	}
 	
 	@Override

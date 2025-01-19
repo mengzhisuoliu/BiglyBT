@@ -71,7 +71,7 @@ public class TorrentDownloaderImpl extends AEThread implements TorrentDownloader
   private boolean cancel = false;
   private String filename, directoryname;
   private File file = null;
-  private final byte[] buf = new byte[1020];
+  private final byte[] buf = new byte[128*1024];
   private int bufBytes = 0;
   private boolean deleteFileOnCancel = true;
   private boolean ignoreReponseCode = false;
@@ -176,7 +176,7 @@ public class TorrentDownloaderImpl extends AEThread implements TorrentDownloader
 
     	String	protocol = url.getProtocol().toLowerCase( Locale.US );
 
-    	// hack here - the magnet download process requires an additional paramter to cause it to
+    	// hack here - the magnet download process requires an additional parameter to cause it to
     	// stall on error so the error can be reported
 
     	if ( protocol.equals( "magnet" ) || protocol.equals( "maggot" ) || protocol.equals( "dht" )){

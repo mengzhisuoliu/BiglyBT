@@ -30,9 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import com.biglybt.core.content.RelatedContentManager.ContentCache;
 import com.biglybt.core.content.RelatedContentManager.DownloadInfo;
-import com.biglybt.core.dht.DHT;
 import com.biglybt.core.dht.transport.udp.DHTTransportUDP;
 import com.biglybt.core.networkmanager.admin.NetworkAdmin;
 import com.biglybt.core.tag.TagUtils;
@@ -42,9 +40,8 @@ import com.biglybt.core.util.bloom.BloomFilterFactory;
 import com.biglybt.pif.ddb.*;
 import com.biglybt.pif.utils.search.*;
 import com.biglybt.pifimpl.local.ddb.DDBaseImpl;
-import com.biglybt.plugin.dht.DHTPlugin;
+import com.biglybt.plugin.dht.DHTPluginBasicInterface;
 import com.biglybt.plugin.dht.DHTPluginContact;
-import com.biglybt.plugin.dht.DHTPluginInterface;
 import com.biglybt.plugin.dht.DHTPluginInterface.DHTInterface;
 import com.biglybt.plugin.net.buddy.BuddyPluginBeta;
 import com.biglybt.plugin.net.buddy.BuddyPluginUtils;
@@ -56,8 +53,6 @@ public class
 RelatedContentSearcher
 	implements DistributedDatabaseTransferHandler
 {
-	static final boolean	SEARCH_CVS_ONLY_DEFAULT		= System.getProperty(SystemProperties.SYSPROP_RCM_SEARCH_CVS_ONLY, "0" ).equals( "1" );
-	
 	private static final boolean	TRACE_SEARCH				= false;
 
 	private static final int	SEARCH_MIN_SEEDS_DEFAULT		= -1;
@@ -120,9 +115,9 @@ RelatedContentSearcher
 
 	final AsyncDispatcher	harvest_dispatcher			= new AsyncDispatcher();
 
-	final RelatedContentManager					manager;
+	final RelatedContentManager							manager;
 	private final DistributedDatabaseTransferType		transfer_type;
-	final DHTPluginInterface					dht_plugin;
+	final DHTPluginBasicInterface						dht_plugin;
 
 	DistributedDatabase				ddb;
 
@@ -130,20 +125,20 @@ RelatedContentSearcher
 	RelatedContentSearcher(
 		RelatedContentManager				_manager,
 		DistributedDatabaseTransferType		_transfer_type,
-		DHTPluginInterface					_dht_plugin,
+		DHTPluginBasicInterface				_dht_plugin,
 		boolean								_defer_ddb_check )
 	{
 		manager			= _manager;
 		transfer_type	= _transfer_type;
 		dht_plugin 		= _dht_plugin;
-
+		
 		if ( !_defer_ddb_check ){
 
 			checkDDB();
 		}
 	}
 
-	protected DHTPluginInterface
+	protected DHTPluginBasicInterface
 	getDHTPlugin()
 	{
 		return( dht_plugin );
@@ -173,7 +168,7 @@ RelatedContentSearcher
 
 		checkKeyBloom();
 
-		testKeyBloom();
+		// testKeyBloom();
 	}
 
 	private void
@@ -182,7 +177,7 @@ RelatedContentSearcher
 		if ( ddb == null ){
 
 			try{
-				List<DistributedDatabase> ddbs = DDBaseImpl.getDDBs( new String[]{ dht_plugin.getNetwork() });
+				List<DistributedDatabase> ddbs = DDBaseImpl.getDDBs( new String[]{ dht_plugin.getAENetwork() });
 
 				if ( ddbs.size() > 0 ){
 
@@ -314,13 +309,11 @@ RelatedContentSearcher
 					
 					boolean hasIPV4 = NetworkAdmin.getSingleton().hasIPV4Potential();
 
-					boolean search_cvs_only = SEARCH_CVS_ONLY_DEFAULT;
-
 					final Set<String>	hashes_sync_me = new HashSet<>();
 
 					try{
 
-						List<RelatedContent>	matches = matchContent( term, min_seeds, min_leechers, max_age_secs, true, search_cvs_only );
+						List<RelatedContent>	matches = matchContent( term, min_seeds, min_leechers, max_age_secs, true );
 
 						for ( final RelatedContent c: matches ){
 
@@ -365,8 +358,6 @@ RelatedContentSearcher
 
 								DHTInterface[]	dhts = dht_plugin.getDHTInterfaces();
 
-								boolean public_dht = dht_plugin.getNetwork() == AENetworkClassifier.AT_PUBLIC;
-
 								for ( DHTInterface dht: dhts ){
 
 									if ( dht.isIPV6() && hasIPV4 ){
@@ -375,13 +366,6 @@ RelatedContentSearcher
 									}
 
 									int	network = dht.getNetwork();
-
-									if ( public_dht && search_cvs_only && network != DHT.NW_AZ_CVS ){
-
-										logSearch( "Search: ignoring main DHT" );
-
-										continue;
-									}
 
 									DHTPluginContact[] contacts = dht.getReachableContacts();
 
@@ -419,13 +403,6 @@ RelatedContentSearcher
 										}
 
 										int	network = dht.getNetwork();
-
-										if ( public_dht && search_cvs_only && network != DHT.NW_AZ_CVS ){
-
-											logSearch( "Search: ignoring main DHT" );
-
-											continue;
-										}
 
 										DHTPluginContact[] contacts = dht.getRecentContacts();
 
@@ -732,6 +709,10 @@ RelatedContentSearcher
 
 							return( new Long( 0 ));
 						}
+						case SearchResult.PR_COMPLETED_COUNT:{
+
+							return( new Long( -1 ));
+						}
 						case SearchResult.PR_PUB_DATE:{
 
 							long	date = c.getPublishDate();
@@ -919,8 +900,7 @@ RelatedContentSearcher
 		int					min_seeds,
 		int					min_leechers,
 		int					max_age_secs,
-		boolean				is_local,
-		boolean				search_cvs_only )
+		boolean				is_local )
 	{
 		if ( !is_local ){
 			
@@ -1028,7 +1008,7 @@ RelatedContentSearcher
 
 		Map<String,RelatedContent>	result = new HashMap<>();
 
-		Iterator<DownloadInfo>	it1 = getDHTInfos( search_cvs_only ).iterator();
+		Iterator<DownloadInfo>	it1 = getDHTInfos().iterator();
 
 		Iterator<DownloadInfo>	it2;
 
@@ -1292,11 +1272,6 @@ RelatedContentSearcher
 			Map<String,Object>	request = new HashMap<>();
 
 			request.put( "t", term );
-
-			if ( SEARCH_CVS_ONLY_DEFAULT ){
-
-				request.put( "n", "c" );
-			}
 
 			if ( min_seeds > 0 ){
 				request.put( "s", (long)min_seeds );
@@ -1717,11 +1692,7 @@ RelatedContentSearcher
 				String	term = MapUtils.getMapString( request, "t", null );
 
 				term = fixupTerm( term );
-
-				String	network = MapUtils.getMapString( request, "n", "" );
-
-				boolean search_cvs_only = network.equals( "c" );
-
+				
 				int	min_seeds 		= MapUtils.importInt( request, "s", SEARCH_MIN_SEEDS_DEFAULT );
 				int	min_leechers 	= MapUtils.importInt( request, "l", SEARCH_MIN_LEECHERS_DEFAULT );
 				int	max_age_secs 	= MapUtils.importInt( request, "a", SEARCH_MAX_AGE_SECS_DEFAULT );
@@ -1736,7 +1707,7 @@ RelatedContentSearcher
 
 					if ( term != null ){
 
-						List<RelatedContent>	matches = matchContent( term, min_seeds, min_leechers, max_age_secs, false, search_cvs_only );
+						List<RelatedContent>	matches = matchContent( term, min_seeds, min_leechers, max_age_secs, false );
 
 						List<Map<String,Object>> l_list = new ArrayList<>();
 
@@ -1912,21 +1883,28 @@ RelatedContentSearcher
 	getDHTWords(
 		DownloadInfo	info )
 	{
-		String title = info.getTitle();
-
-		title = title.toLowerCase( Locale.US );
-
-		char[]	chars = title.toCharArray();
-
-		for ( int i=0;i<chars.length;i++){
-
-			if ( !Character.isLetterOrDigit( chars[i])){
-
-				chars[i] = ' ';
+		String[] words = info.getTitleWordCache();
+		
+		if ( words == null ){
+			
+			String title = info.getTitle();
+				
+			title = title.toLowerCase( Locale.US );
+	
+			char[]	chars = title.toCharArray();
+	
+			for ( int i=0;i<chars.length;i++){
+	
+				if ( !Character.isLetterOrDigit( chars[i])){
+	
+					chars[i] = ' ';
+				}
 			}
+	
+			words = new String( chars ).split( " " );
+			
+			info.setTitleWordCache( words );
 		}
-
-		String[] words = new String( chars ).split( " " );
 
 		List<String>	result = new ArrayList<>(words.length);
 
@@ -1976,7 +1954,7 @@ RelatedContentSearcher
 			Set<String>	dht_only_words 		= new HashSet<>();
 			Set<String>	non_dht_words 		= new HashSet<>();
 
-			List<DownloadInfo>		dht_infos		= getDHTInfos( SEARCH_CVS_ONLY_DEFAULT );
+			List<DownloadInfo>		dht_infos		= getDHTInfos();
 
 			Iterator<DownloadInfo>	it_dht 			= dht_infos.iterator();
 
@@ -2081,25 +2059,9 @@ RelatedContentSearcher
 	}
 
 	private List<DownloadInfo>
-	getDHTInfos(
-		boolean		search_cvs_only )
+	getDHTInfos()
 	{
-		List<DHTPluginValue> vals;
-
-		if ( search_cvs_only ){
-
-			if ( dht_plugin instanceof DHTPlugin ){
-
-				vals = ((DHTPlugin)dht_plugin).getValues( DHTPlugin.NW_AZ_CVS,  false );
-
-			}else{
-
-				vals = dht_plugin.getValues();
-			}
-		}else{
-
-			vals = dht_plugin.getValues();
-		}
+		List<DHTPluginValue> vals = dht_plugin.getValues();
 
 		Set<String>	unique_keys = new HashSet<>();
 
@@ -2134,6 +2096,7 @@ RelatedContentSearcher
 		return( dht_infos );
 	}
 
+	/*
 	private void
 	testKeyBloom()
 	{
@@ -2150,7 +2113,7 @@ RelatedContentSearcher
 
 				ContentCache cache = manager.loadRelatedContent();
 
-				List<DownloadInfo>		dht_infos		= getDHTInfos( false );
+				List<DownloadInfo>		dht_infos		= getDHTInfos( -1 );
 
 				Iterator<DownloadInfo>	it_dht 			= dht_infos.iterator();
 
@@ -2220,11 +2183,11 @@ RelatedContentSearcher
 					misses++;
 				}
 
-				List<RelatedContent> hits = matchContent( word, SEARCH_MIN_SEEDS_DEFAULT, SEARCH_MIN_LEECHERS_DEFAULT, SEARCH_MAX_AGE_SECS_DEFAULT, true, false );
+				List<RelatedContent> hits = matchContent( word, SEARCH_MIN_SEEDS_DEFAULT, SEARCH_MIN_LEECHERS_DEFAULT, SEARCH_MAX_AGE_SECS_DEFAULT, true, -1 );
 
 				if ( hits.size() == 0 ){
 
-					hits = matchContent( word, SEARCH_MIN_SEEDS_DEFAULT, SEARCH_MIN_LEECHERS_DEFAULT, SEARCH_MAX_AGE_SECS_DEFAULT, true, false );
+					hits = matchContent( word, SEARCH_MIN_SEEDS_DEFAULT, SEARCH_MIN_LEECHERS_DEFAULT, SEARCH_MAX_AGE_SECS_DEFAULT, true, -1 );
 
 					match_fails++;
 				}
@@ -2237,7 +2200,8 @@ RelatedContentSearcher
 			e.printStackTrace();
 		}
 	}
-
+	*/
+	
 	private void
 	harvestBlooms()
 	{
@@ -2326,13 +2290,6 @@ outer:
 								}
 
 								int	network = dht.getNetwork();
-
-								if ( SEARCH_CVS_ONLY_DEFAULT && network != DHT.NW_AZ_CVS ){
-
-									logSearch( "Harvest: ignoring main DHT" );
-
-									continue;
-								}
 
 								DHTPluginContact[] contacts = dht.getReachableContacts();
 
@@ -2424,12 +2381,8 @@ outer:
 			return( ddb.importContact( contact.exportToMap()));
 
 		}else{
-
-			return( 
-				ddb.importContact( 
-					address, 
-					DHTTransportUDP.PROTOCOL_VERSION_MIN_AZ, 
-					network==DHT.NW_AZ_CVS?DistributedDatabase.DHT_AZ_CVS:DistributedDatabase.DHT_AZ_MAIN ));
+			
+			return( ddb.importContact( address,	DHTTransportUDP.PROTOCOL_VERSION_MIN_AZ, network ));
 		}
 	}
 
@@ -2634,16 +2587,26 @@ outer:
 		return( result );
 	}
 
-	static void
+	void
 	logSearch(
 		String		str )
 	{
 		if ( TRACE_SEARCH ){
-			System.out.println( str );
+			
+			DHTInterface[] intfs =  dht_plugin.getDHTInterfaces();
+			
+			String prefix = "";
+			
+			for ( DHTInterface intf: intfs ){
+				
+				prefix += (prefix.isEmpty()?"":",") + intf.getNetwork();
+			}
+			
+			System.out.println( dht_plugin.getAENetwork() + ":" + prefix + " " + str );
 		}
 	}
 
-	private static class
+	private class
 	MySearchObserver
 		implements SearchObserver
 	{

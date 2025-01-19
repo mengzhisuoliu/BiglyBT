@@ -22,14 +22,10 @@ import java.util.List;
 import java.util.*;
 
 import org.eclipse.swt.SWT;
-import org.eclipse.swt.dnd.Clipboard;
-import org.eclipse.swt.dnd.TextTransfer;
 import org.eclipse.swt.events.*;
 import org.eclipse.swt.graphics.*;
 import org.eclipse.swt.layout.FormAttachment;
 import org.eclipse.swt.layout.FormData;
-import org.eclipse.swt.layout.FormLayout;
-import org.eclipse.swt.layout.RowLayout;
 import org.eclipse.swt.widgets.*;
 
 import com.biglybt.activities.ActivitiesManager;
@@ -369,7 +365,7 @@ public class MainWindowImpl
 
 	private void processStartupDMS() {
 		// must be in a new thread because we don't want to block
-		// initilization or any other add listeners
+		// initialization or any other add listeners
 		AEThread2 thread = new AEThread2("v3.mw.dmAdded", true) {
 			@Override
 			public void run() {
@@ -614,6 +610,8 @@ public class MainWindowImpl
 						return;
 					}
 					
+					Utils.setUIVisible( false );
+					
 					if (	COConfigurationManager.getBooleanParameter("Minimize To Tray") && 
 							( 	( systemTraySWT != null && COConfigurationManager.getBooleanParameter("Enable System Tray")) || 
 								COConfigurationManager.getBooleanParameter("System Tray Disabled Override"))){						
@@ -624,6 +622,8 @@ public class MainWindowImpl
 
 				@Override
 				public void shellDeiconified(ShellEvent e) {
+					Utils.setUIVisible( true );
+					
 					if (Constants.isOSX
 							&& COConfigurationManager.getBooleanParameter("Password enabled")) {
 						shell.setVisible(false);
@@ -747,9 +747,11 @@ public class MainWindowImpl
 					COConfigurationManager.getBooleanParameter(configID)
 							&& COConfigurationManager.getIntParameter("User Mode") > 1);
 
-			setVisible(WINDOW_ELEMENT_RIGHTBAR,
-					COConfigurationManager.getBooleanParameter( SkinConstants.VIEWID_RIGHTBAR + ".visible" ));
-
+			if ( !Utils.isAZ2UI()){
+				setVisible(WINDOW_ELEMENT_RIGHTBAR,
+						COConfigurationManager.getBooleanParameter( SkinConstants.VIEWID_RIGHTBAR + ".visible" ));
+			}
+			
 			setVisible(WINDOW_ELEMENT_TOOLBAR,
 					COConfigurationManager.getBooleanParameter("IconBar.enabled"));
 
@@ -1208,6 +1210,7 @@ public class MainWindowImpl
 			}
 		}
 
+		Utils.setUIVisible( !bStartMinimize );
 
 		if (delayedCore) {
 			// max 5 seconds of dispatching.  We don't display.sleep here because
@@ -1458,6 +1461,7 @@ public class MainWindowImpl
 		Utils.execSWTThread(new AERunnable() {
 			@Override
 			public void runSupport() {
+				Utils.setUIVisible( visible );
 				boolean currentlyVisible = shell.getVisible() && !shell.getMinimized();
 				if (visible && !currentlyVisible) {
 					if (COConfigurationManager.getBooleanParameter("Password enabled")) {
@@ -1544,6 +1548,8 @@ public class MainWindowImpl
 				shell.getMaximized());
 		shell.setVisible(false);
 
+		Utils.setUIVisible( false );
+		
 		ShellManager.sharedManager().performForShells(
 			new Listener()
 			{

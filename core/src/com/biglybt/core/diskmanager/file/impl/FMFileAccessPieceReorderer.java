@@ -56,7 +56,7 @@ FMFileAccessPieceReorderer
  * trim later
  *
  * Whenever a piece is marked as complete we look up its location. If the required piece
- * of the file has already been allocated (and its not alread in the right place) then
+ * of the file has already been allocated (and its not already in the right place) then
  * we swap the piece data at that location with the current piece's. If the file chunk hasn't
  * been allocated yet then we leave the piece where it is - it'll be moved later.
  *
@@ -133,25 +133,9 @@ FMFileAccessPieceReorderer
 
 				piece_size = (int)_torrent_file.getTorrent().getPieceLength();
 
-				TOTorrent	torrent = _torrent_file.getTorrent();
-
 				long	file_length	= _torrent_file.getLength();
 
-				long	file_offset_in_torrent = 0;
-
-				TOTorrentFile[] files = torrent.getFiles();
-
-				for (int i=0;i<files.length;i++){
-
-					TOTorrentFile	f = files[i];
-
-					if ( f == _torrent_file ){
-
-						break;
-					}
-
-					file_offset_in_torrent	+= f.getLength();
-				}
+				long	file_offset_in_torrent = _torrent_file.getOffsetInTorrent();
 
 				int first_piece_offset 	= (int)( file_offset_in_torrent % piece_size );
 
@@ -159,21 +143,19 @@ FMFileAccessPieceReorderer
 
 				long	file_end = file_offset_in_torrent + file_length;
 
-
 				last_piece_length = (int)( file_end - (( file_end / piece_size ) * piece_size ));
 
 				if ( last_piece_length == 0 ){
 
 					last_piece_length = piece_size;
 				}
-
 			}
 
 			dirt_state = FileUtil.newFile( control_dir, control_file ).exists()?DIRT_CLEAN:DIRT_NEVER_WRITTEN;
 
 		}catch( Throwable e ){
 
-			throw( new FMFileManagerException( "Piece-reorder file init fail", e ));
+			throw( new FMFileManagerException( FMFileManagerException.OP_OPEN, "Piece-reorder file init fail", e ));
 		}
 	}
 
@@ -356,7 +338,7 @@ FMFileAccessPieceReorderer
 
 		if ( piece_number >= num_pieces ){
 
-			throw( new FMFileManagerException( "Attempt to " + str + " piece " + piece_number + ": last=" + num_pieces ));
+			throw( new FMFileManagerException( is_read?FMFileManagerException.OP_READ:FMFileManagerException.OP_WRITE, "Attempt to " + str + " piece " + piece_number + ": last=" + num_pieces ));
 		}
 
 		int	this_piece_size = piece_number==0?first_piece_length:(piece_number==(num_pieces-1)?last_piece_length:piece_size);
@@ -365,7 +347,7 @@ FMFileAccessPieceReorderer
 
 		if ( piece_space <= 0 ){
 
-			throw( new FMFileManagerException( "Attempt to " + str + " piece " + piece_number + ", offset " + piece_offset + " - no space in piece" ));
+			throw( new FMFileManagerException( is_read?FMFileManagerException.OP_READ:FMFileManagerException.OP_WRITE, "Attempt to " + str + " piece " + piece_number + ", offset " + piece_offset + " - no space in piece" ));
 		}
 
 		int	rem_space = piece_space;
@@ -490,7 +472,7 @@ FMFileAccessPieceReorderer
 							bb.put( new byte[rem] );
 
 								// not great this... to obey the normal file access semantics reads are
-								// never partial (normally we'd extend the file to accomodate the read but
+								// never partial (normally we'd extend the file to accommodate the read but
 								// in the case of re-order access we don't want to do this when hash checking
 								// a file. The issue is in the unlikely case where our padding happens to
 								// match the real file contents and results in a piece hash check succeeding
@@ -504,7 +486,7 @@ FMFileAccessPieceReorderer
 					}
 				}else{
 
-					throw( new FMFileManagerException( "partial write operation" ));
+					throw( new FMFileManagerException( is_read?FMFileManagerException.OP_READ:FMFileManagerException.OP_WRITE, "partial write operation" ));
 				}
 
 				return;
@@ -673,7 +655,7 @@ FMFileAccessPieceReorderer
 
 			if ( store_index == -1 ){
 
-				throw( new FMFileManagerException( "piece marked as complete but not yet allocated" ));
+				throw( new FMFileManagerException( FMFileManagerException.OP_WRITE, "piece marked as complete but not yet allocated" ));
 			}
 
 			if ( piece_number == store_index ){
@@ -693,7 +675,7 @@ FMFileAccessPieceReorderer
 
 			if ( swap_piece_number < 1 ){
 
-				throw( new FMFileManagerException( "Inconsistent: failed to find piece to swap" ));
+				throw( new FMFileManagerException( FMFileManagerException.OP_WRITE, "Inconsistent: failed to find piece to swap" ));
 			}
 
 			if ( TRACE ){
@@ -938,7 +920,7 @@ FMFileAccessPieceReorderer
 
 		writeConfig();
 
-		FMFileManagerException e = new FMFileManagerException( error );
+		FMFileManagerException e = new FMFileManagerException( FMFileManagerException.OP_OPEN, error );
 
 		e.setRecoverable( false );
 
@@ -1064,7 +1046,7 @@ FMFileAccessPieceReorderer
 
 		if ( !FileUtil.writeResilientFileWithResult( control_dir, config_file.getName(), map )){
 
-			throw( new FMFileManagerException( "Failed to write control file " + config_file.getAbsolutePath()));
+			throw( new FMFileManagerException( FMFileManagerException.OP_WRITE, "Failed to write control file " + config_file.getAbsolutePath()));
 		}
 	}
 
@@ -1087,7 +1069,7 @@ FMFileAccessPieceReorderer
 
 		if ( !FileUtil.writeResilientFileWithResult( control_dir, control_file, map )){
 
-			throw( new FMFileManagerException( "Failed to write control file " + FileUtil.newFile( control_dir, control_file ).getAbsolutePath()));
+			throw( new FMFileManagerException( FMFileManagerException.OP_WRITE, "Failed to write control file " + FileUtil.newFile( control_dir, control_file ).getAbsolutePath()));
 		}
 
 		if ( TRACE ){

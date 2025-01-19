@@ -28,7 +28,9 @@ import java.util.Locale;
 import java.util.Map;
 
 import com.biglybt.core.config.COConfigurationManager;
+import com.biglybt.core.metasearch.FilterableResult;
 import com.biglybt.core.metasearch.Result;
+import com.biglybt.core.subs.Subscription;
 import com.biglybt.core.subs.SubscriptionResult;
 import com.biglybt.core.subs.util.SearchSubsResultBase;
 import com.biglybt.core.util.*;
@@ -213,7 +215,14 @@ SubscriptionResultImpl
 		}else{
 
 			try{
-				result_json	= new String((byte[])map.get( "result_json" ), "UTF-8" );
+				byte[] bytes = (byte[])map.get( "result_json" );
+				
+				if ( bytes == null ){
+					
+					bytes = new byte[0];
+				}
+				
+				result_json	= new String( bytes, "UTF-8" );
 
 			}catch( Throwable e ){
 
@@ -401,6 +410,13 @@ SubscriptionResultImpl
 	}
 
 	@Override
+	public Subscription 
+	getSubscription()
+	{
+		return( history.getSubscription());
+	}
+	
+	@Override
 	public String
 	getID()
 	{
@@ -506,7 +522,18 @@ SubscriptionResultImpl
 		}else{
 
 			try{
-				map.put( "result_json", result_json.getBytes( "UTF-8" ));
+				byte[] bytes;
+				
+				if ( result_json == null ){
+					
+					bytes = new byte[0];
+					
+				}else{
+					
+					bytes = result_json.getBytes( "UTF-8" );
+				}
+				
+				map.put( "result_json", bytes );
 
 			}catch( Throwable e ){
 
@@ -698,6 +725,9 @@ SubscriptionResultImpl
 
 			result.put( SearchResult.PR_LEECHER_COUNT, peers==null?-1:Long.parseLong(peers) );
 
+			String	completed = (String)map.get( "gr" );
+
+			result.put( SearchResult.PR_COMPLETED_COUNT, completed==null?-1:Long.parseLong(completed) );
 
 			String	votes = (String)map.get( "v" );
 
@@ -741,5 +771,80 @@ SubscriptionResultImpl
 
 			return( result );
 		}
+	}
+	
+	@Override
+	public FilterableResult 
+	getFilterableResult()
+	{
+		Map<Integer,Object> properties = toPropertyMap();
+		
+		return( 
+			new FilterableResult(){
+				public String
+				getName()
+				{
+					return( (String)properties.get( SearchResult.PR_NAME ));
+				}
+				
+				public String
+				getCategory()
+				{
+					return((String)properties.get( SearchResult.PR_CATEGORY ));
+				}
+				
+				public String[]
+				getTags()
+				{
+					return((String[])properties.get( SearchResult.PR_TAGS ));
+				}
+				
+				public long
+				getSize()
+				{
+					return((Long)properties.get( SearchResult.PR_SIZE ));
+				}
+				
+				public int
+				getNbSeeds()
+				{
+					long seeds = (Long)properties.get( SearchResult.PR_SEED_COUNT );
+
+					return((int)(seeds<0?0:seeds));
+				}
+				
+				public int
+				getNbPeers()
+				{
+					long leechers 	= (Long)properties.get( SearchResult.PR_LEECHER_COUNT );
+					
+					return((int)(leechers<0?0:leechers));
+				}
+	
+				public long
+				getTime()
+				{
+					Date pub_date = (Date)properties.get( SearchResult.PR_PUB_DATE );
+
+					if ( pub_date == null ){
+
+						return( getTimeFound());
+
+					}else{
+
+						long pt = pub_date.getTime();
+
+						if ( pt <= 0 ){
+
+							return( getTimeFound());
+
+						}else{
+
+							return( pt );
+						}
+					}
+
+				}
+			});
 	}
 }

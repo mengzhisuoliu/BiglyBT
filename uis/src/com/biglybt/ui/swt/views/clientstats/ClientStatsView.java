@@ -52,7 +52,6 @@ import com.biglybt.ui.swt.Messages;
 import com.biglybt.ui.swt.Utils;
 import com.biglybt.ui.swt.components.BubbleTextBox;
 import com.biglybt.ui.swt.mainwindow.ClipboardCopy;
-import com.biglybt.ui.swt.utils.FontUtils;
 import com.biglybt.ui.swt.views.table.TableViewSWT;
 import com.biglybt.ui.swt.views.table.impl.TableViewFactory;
 import com.biglybt.ui.swt.views.table.impl.TableViewTab;
@@ -388,7 +387,7 @@ public class ClientStatsView
 	@Override
 	public TableViewSWT<ClientStatsDataSource> initYourTableView() {
 		tv = TableViewFactory.createTableViewSWT(ClientStatsDataSource.class,
-				TABLEID, getPropertiesPrefix(), new TableColumnCore[0],
+				TABLEID, getTextPrefixID(), new TableColumnCore[0],
 				ColumnCS_Count.COLUMN_ID, SWT.MULTI | SWT.FULL_SELECTION | SWT.VIRTUAL);
 		/*
 				tv.addTableDataSourceChangedListener(this, true);
@@ -948,6 +947,9 @@ public class ClientStatsView
 			if (s.startsWith("HTTP Seed")) {
 				return "HTTP Seed";
 			}
+		}
+		if ( s.startsWith( "Unknown [" ) && s.length() >= 11){
+			s = s.substring( 0,11 )+ "]";
 		}
 		return s.replaceAll(" v?[0-9._]+", "");
 	}

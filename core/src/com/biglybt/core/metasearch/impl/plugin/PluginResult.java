@@ -143,6 +143,13 @@ PluginResult
 	{
 		return(getIntProperty( SearchResult.PR_SUPER_SEED_COUNT ));
 	}
+	
+	@Override
+	public int
+	getNbCompleted()
+	{
+		return(getIntProperty( SearchResult.PR_COMPLETED_COUNT ));
+	}
 
 	@Override
 	public int
@@ -151,6 +158,12 @@ PluginResult
 		return(getIntProperty( SearchResult.PR_COMMENTS ));
 	}
 
+	public String 
+	getDescription()
+	{
+		return( getStringProperty( SearchResult.PR_DESCRIPTION ));
+	}
+	
 	@Override
 	public int
 	getVotes()
@@ -310,7 +323,9 @@ PluginResult
 	getIntProperty(
 		int		name )
 	{
-		return((int)getLongProperty( name ));
+		long res = getLongProperty( name );
+		
+		return( res == Long.MIN_VALUE?Integer.MIN_VALUE:(int)res );
 	}
 
 	protected long

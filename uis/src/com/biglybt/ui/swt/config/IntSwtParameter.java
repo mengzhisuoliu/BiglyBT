@@ -36,7 +36,7 @@ import com.biglybt.pifimpl.local.ui.config.IntParameterImpl;
 import com.biglybt.ui.swt.Messages;
 import com.biglybt.ui.swt.Utils;
 import com.biglybt.ui.swt.mainwindow.ClipboardCopy;
-
+import com.biglybt.ui.swt.widgets.LabelWithMinMaxWidth;
 import com.biglybt.pif.ui.config.IntParameter;
 import com.biglybt.pif.ui.config.ParameterValidator.ValidationInfo;
 
@@ -49,6 +49,22 @@ public class IntSwtParameter
 	public interface ValueProcessor
 		extends SwtParameterValueProcessor<IntSwtParameter, Integer>
 	{
+		public default Integer
+		getValue(
+			List<Integer>	values )
+		{
+			if ( values.isEmpty()){
+				return( null );
+			}else{
+				int result = values.get(0);
+				for ( int v: values.subList( 1, values.size())){
+					if ( v != result ){
+						return( null );
+					}
+				}
+				return( result );
+			}
+		}
 	}
 
 	private int valueWhenBlank;
@@ -206,10 +222,11 @@ public class IntSwtParameter
 		}
 
 		if (suffixLabelKey != null) {
-			lblSuffix = new Label(parent, SWT.WRAP);
+			lblSuffix = new LabelWithMinMaxWidth(parent, SWT.WRAP,100,500);
 			Messages.setLanguageText(lblSuffix, suffixLabelKey);
-			lblSuffix.setLayoutData(
-					Utils.getWrappableLabelGridData(1, GridData.FILL_HORIZONTAL));
+			GridData gridData = Utils.getWrappableLabelGridData(1, GridData.FILL_HORIZONTAL);
+			gridData.widthHint = SWT.DEFAULT;	// without this the suffix is invisible :(
+			lblSuffix.setLayoutData( gridData );
 			ClipboardCopy.addCopyToClipMenu(lblSuffix);
 		}
 
@@ -230,8 +247,9 @@ public class IntSwtParameter
 					debug("create timeSaveEvent (" + spinner.getSelection() + ") ");
 				}
 				if (!disableTimedSave) {
-					timedSaveEvent = SimpleTimer.addEvent("IntParam Saver",
-							SystemTime.getOffsetTime(750), timerEventSave);
+					if ( pluginParam == null || pluginParam.getGenerateIntermediateEvents()){
+						timedSaveEvent = SimpleTimer.addEvent("IntParam Saver",	SystemTime.getOffsetTime(750), timerEventSave);
+					}
 				}
 			}
 		});
@@ -334,8 +352,18 @@ public class IntSwtParameter
 			}
 
 			Integer value = getValue();
-			if (value == null) {
+			
+			if ( value == null ){
+				
+					// indeterminate
+				
+				Utils.setSkinnedForeground( spinner, Utils.getSkinnedBackground(spinner), true );
+			
 				return;
+				
+			}else{
+				
+				Utils.setSkinnedForeground( spinner, null, true );
 			}
 
 			if (spinner.getSelection() != value) {
@@ -346,8 +374,9 @@ public class IntSwtParameter
 				spinner.setSelection(value);
 			}
 
-			if (isZeroHidden) {
-				spinner.setForeground(value == 0 ? colorHidden : null);
+			if (isZeroHidden){
+				
+				Utils.setSkinnedForeground( spinner, value == 0 ? colorHidden : null, true );
 			}
 		});
 	}

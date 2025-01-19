@@ -179,7 +179,7 @@ public class AboutWindow {
     				+ Constants.OSVersion + ", "
     				+ Constants.OSArch + " (" + (Constants.isOS64Bit?64:32) + " bit)\n"
     				+ Constants.APP_NAME.charAt(0) + Constants.getCurrentVersion() + (Constants.SUBVERSION.length()==0?"":("-"+Constants.SUBVERSION)) + "/" + CorePatchLevel.getCurrentPatchLevel() + " "
-    				+ COConfigurationManager.getStringParameter("ui");
+    				+ COConfigurationManager.getStringParameter("ui") + " " + MessageText.getCurrentLocale();
 
     txtSysInfo.setText( about_text );
 		gridData = new GridData(GridData.FILL_BOTH);
@@ -202,7 +202,7 @@ public class AboutWindow {
 				Constants.URL_FORUMS,
 				Constants.URL_WIKI,
 				Constants.PLUGINS_WEB_SITE,
-				"http://ezhdqq3jjpsqg65l.onion"
+				"https://xp5qetgwtj6w62sutz2xnjpx2l7j4z56mbt7xr7wmejerbg67g7nwfyd.onion"
 			}
 		};
 

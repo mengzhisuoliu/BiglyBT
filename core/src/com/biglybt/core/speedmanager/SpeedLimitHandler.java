@@ -2785,7 +2785,7 @@ SpeedLimitHandler
 		private final com.biglybt.pif.download.DownloadManager		download_manager;
 		private final Set<String>									has_cats_or_tags;
 
-		final List<Runnable>	listener_removers = new ArrayList<>();
+		final Map<Download,List<Runnable>>	listener_removers = new IdentityHashMap<>();
 
 		private volatile boolean	destroyed;
 
@@ -2809,14 +2809,17 @@ SpeedLimitHandler
 
 				download_manager.removeListener( this );
 
-				for ( Runnable r: listener_removers ){
+				for ( List<Runnable> dl_listeners: listener_removers.values()){
 
-					try{
-						r.run();
-
-					}catch( Throwable e ){
-
-						Debug.out( e );
+					for ( Runnable r: dl_listeners ){
+						
+						try{
+							r.run();
+	
+						}catch( Throwable e ){
+	
+							Debug.out( e );
+						}
 					}
 				}
 
@@ -2841,6 +2844,21 @@ SpeedLimitHandler
 					return;
 				}
 
+				List<Runnable> _dl_listeners = listener_removers.get( download );
+				
+				if ( _dl_listeners == null ){
+					
+					_dl_listeners = new ArrayList<>();
+					
+					listener_removers.put( download, _dl_listeners );
+					
+				}else{
+					
+					Debug.out( "already present" );
+				}
+				
+				List<Runnable> dl_listeners = _dl_listeners;
+				
 				if ( !has_cats_or_tags.isEmpty()){
 
 						// attribute listener
@@ -2914,7 +2932,7 @@ SpeedLimitHandler
 
 						tt.addTagListener( core_download, tag_listener );
 
-						listener_removers.add(
+						dl_listeners.add(
 							new Runnable(){
 								@Override
 								public void run()
@@ -2988,7 +3006,7 @@ SpeedLimitHandler
 											peer_manager.removeListener( listener );
 										}};
 
-								listener_removers.add( pm_listener_remover );
+								dl_listeners.add( pm_listener_remover );
 							}
 
 							Peer[] peers = peer_manager.getPeers();
@@ -3011,7 +3029,7 @@ SpeedLimitHandler
 								
 								current_pm = null;
 								
-								if ( listener_removers.remove( pm_listener_remover  )){
+								if ( dl_listeners.remove( pm_listener_remover  )){
 
 									pm_listener_remover.run();
 									
@@ -3023,7 +3041,7 @@ SpeedLimitHandler
 
 				download.addPeerListener( peer_listener );
 
-				listener_removers.add(
+				dl_listeners.add(
 					new Runnable(){
 						@Override
 						public void run()
@@ -3040,6 +3058,24 @@ SpeedLimitHandler
 		downloadRemoved(
 			Download	download )
 		{
+			synchronized( lock ){
+				
+				List<Runnable> dl_listeners = listener_removers.remove( download );
+				
+				if ( dl_listeners != null ){
+					
+					for ( Runnable r: dl_listeners ){
+
+						try{
+							r.run();
+
+						}catch( Throwable e ){
+
+							Debug.out( e );
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -3793,7 +3829,7 @@ SpeedLimitHandler
 		result.add( "#     daily limited_upload from 06:00 to 22:00 stop_tag:bigstuff" );
 		result.add( "#     daily pause_all from 08:00 to 17:00" );
 		result.add( "#" );
-		result.add( "#     net_limit monthly total=250G          // flat montly limit" );
+		result.add( "#     net_limit monthly total=250G          // flat monthly limit" );
 		result.add( "#" );
 		result.add( "#     net_limit monthly:no_limits                  // no monthly limit when no_limits active" );
 		result.add( "#     net_limit monthly:limited_upload total=100G  // 100G a month limit when limited_upload active" );
@@ -8091,7 +8127,7 @@ SpeedLimitHandler
 												if ( probe_rate <= 0 || rate < 110*probe_rate/100 ){
 
 														// weak one went down but previous probe rate doesn't
-														// let it off teh hook
+														// let it off the hook
 
 													stick_with_decision = true;
 
@@ -8166,7 +8202,7 @@ SpeedLimitHandler
 
 										tag_state.setLimit( my_target, PrioritiserTagState.CT_MAJOR, "1: adjusting after limit hit (diffs=" + formatRate( hp_diff, false ) + "/" + formatRate( my_diff, false ) + ", consec=" + consec_limits_hit + ")" );
 
-											// decrease lower priority limits agressively as any bandwidth they are consuming
+											// decrease lower priority limits aggressively as any bandwidth they are consuming
 											// needs to be pushed our way
 
 										int	low_pri_rates = 0;

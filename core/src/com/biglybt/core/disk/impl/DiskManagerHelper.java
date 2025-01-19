@@ -63,7 +63,8 @@ DiskManagerHelper
 	setFailed(
 		int						type,
 		String					reason,
-		Throwable				cause );
+		Throwable				cause,
+		boolean					can_continue );
 
 	public void
 	setFailedAndRecheck(
@@ -75,6 +76,9 @@ DiskManagerHelper
 		DiskManagerPieceImpl	piece,
 		boolean					done );
 
+	public boolean
+	isUploadOnly();
+	
 	@Override
 	public TOTorrent
 	getTorrent();

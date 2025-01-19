@@ -66,7 +66,7 @@ SubscriptionSchedulerImpl
 
 	private Set<String>	active_result_downloaders		= new HashSet<>();
 
-	private ThreadPool	result_downloader = new ThreadPool( "SubscriptionDownloader", 5, true );
+	private ThreadPool<AERunnable>	result_downloader = new ThreadPool<>( "SubscriptionDownloader", 5, true );
 
 	private boolean		schedulng_permitted;
 
@@ -96,7 +96,7 @@ SubscriptionSchedulerImpl
 						schedulng_permitted	= true;
 					}
 
-					calculateSchedule();
+					calculateScheduleDispatcher.dispatch();
 				}
 			});
 
@@ -639,7 +639,7 @@ SubscriptionSchedulerImpl
 
 											long	time_found = result.getTimeFound();
 
-											// log( "found=" + new SimpleDateFormat().format(new Date( time_found)) + ", ago=" + ((SystemTime.getCurrentTime()-time_found )) + ", rad=" + rad_millis );
+											// log( "found=" + DisplayFormatters.formatDateYMDHM( time_found)) + ", ago=" + ((SystemTime.getCurrentTime()-time_found )) + ", rad=" + rad_millis );
 
 											if ( time_found > 0 && time_found + rad_millis < SystemTime.getCurrentTime()){
 
@@ -661,7 +661,7 @@ SubscriptionSchedulerImpl
 									active_result_downloaders.remove( key );
 								}
 	
-								calculateSchedule();
+								calculateScheduleDispatcher.dispatch();
 							}
 						}
 					}
@@ -718,6 +718,8 @@ SubscriptionSchedulerImpl
 
 				sub.setUserData( SCHEDULER_NEXT_SCAN_KEY, new Long( next_scan ));
 
+				sub.getHistory().setNextScheduledUpdate( next_scan );
+				
 				if ( next_scan < next_ready_time ){
 
 					next_ready_time = next_scan;
@@ -757,8 +759,8 @@ SubscriptionSchedulerImpl
 
 				String sched_str =
 						"Calculate : " +
-						"old_time=" + (old_when==0?"none":new SimpleDateFormat().format(new Date(old_when))) +
-						", new_time=" + new SimpleDateFormat().format(new Date(next_ready_time)) +
+						"old_time=" + (old_when==0?"none":DisplayFormatters.formatDateYMDHM(old_when)) +
+						", new_time=" + DisplayFormatters.formatDateYMDHM(next_ready_time) +
 						", next_sub=" + next_ready_subs.getName();
 
 				if ( last_sched_str == null || !sched_str.equals( last_sched_str )){
@@ -808,7 +810,7 @@ SubscriptionSchedulerImpl
 											schedule_in_progress = false;
 										}
 
-										calculateSchedule();
+										calculateScheduleDispatcher.dispatch();;
 									}
 								}
 							}.start();
@@ -1034,12 +1036,19 @@ SubscriptionSchedulerImpl
 		manager.log( "Scheduler: " + str, e );
 	}
 
+	private FrequencyLimitedDispatcher calculateScheduleDispatcher = 
+			new FrequencyLimitedDispatcher(
+				AERunnable.create(()->{
+					calculateSchedule();
+				}),
+			1000 );
+	
 	@Override
 	public void
 	subscriptionAdded(
 		Subscription		subscription )
 	{
-		calculateSchedule();
+		calculateScheduleDispatcher.dispatch();
 	}
 
 	@Override
@@ -1048,7 +1057,7 @@ SubscriptionSchedulerImpl
 		Subscription		subscription,
 		int					reason )
 	{
-		calculateSchedule();
+		calculateScheduleDispatcher.dispatch();
 	}
 
 	@Override
@@ -1063,7 +1072,7 @@ SubscriptionSchedulerImpl
 	subscriptionRemoved(
 		Subscription		subscription )
 	{
-		calculateSchedule();
+		calculateScheduleDispatcher.dispatch();
 	}
 
 	@Override

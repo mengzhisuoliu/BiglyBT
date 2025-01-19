@@ -65,6 +65,7 @@ import com.biglybt.pif.clientid.ClientIDGenerator;
 import com.biglybt.pif.dht.mainline.MainlineDHTProvider;
 import com.biglybt.pif.network.Connection;
 import com.biglybt.pif.peers.Peer;
+import com.biglybt.pif.peers.PeerDescriptor;
 import com.biglybt.pifimpl.local.clientid.ClientIDManagerImpl;
 import com.biglybt.pifimpl.local.network.ConnectionImpl;
 
@@ -153,7 +154,8 @@ implements PEPeerTransport
 
 	private int connection_state = PEPeerTransport.CONNECTION_PENDING;
 	
-	private int outbound_connection_progress	= CP_UNKNOWN;
+	private long 	outbound_connection_start;
+	private int 	outbound_connection_progress	= CP_UNKNOWN;
 	
 	private String client = ""; // Client name to show to user.
 	private String client_peer_id = ""; // Client name derived from the peer ID.
@@ -173,7 +175,7 @@ implements PEPeerTransport
 	private long last_message_sent_time_mono 			= -1;
 	private long last_message_received_time_mono 		= -1;
 	private long last_data_message_received_time_mono 	= -1;
-	private long last_good_data_time_mono				= -1;		// time data written to disk was recieved
+	private long last_good_data_time_mono				= -1;		// time data written to disk was received
 	private long last_data_message_sent_time_mono 		= -1;
 	private long connection_established_time_mono 		= -1;
 
@@ -402,7 +404,7 @@ implements PEPeerTransport
 	private HashWrapper peerSessionID;
 	private HashWrapper mySessionID;
 
-	// allow reconnect if we've sent or recieved at least 1 piece over the current connection
+	// allow reconnect if we've sent or received at least 1 piece over the current connection
 	private boolean allowReconnect;
 	private boolean isReconnect;
 
@@ -864,7 +866,8 @@ implements PEPeerTransport
 								
 								connection_state = PEPeerTransport.CONNECTION_CONNECTING;
 
-								outbound_connection_progress = CP_CONNECTING;
+								outbound_connection_start		= SystemTime.getMonotonousTime();
+								outbound_connection_progress	= CP_CONNECTING;
 							}
 						}
 						
@@ -1062,7 +1065,7 @@ implements PEPeerTransport
 	/**
 	 * Close the peer connection from the PEPeerControl manager side.
 	 * NOTE: This method assumes PEPeerControl already knows about the close.
-	 * This method is inteded to be only invoked by select administrative methods.
+	 * This method is intended to be only invoked by select administrative methods.
 	 * You probably should not invoke this directly.
 	 */
 	@Override
@@ -1080,7 +1083,7 @@ implements PEPeerTransport
 				return;
 			closing = true;
 
-			// immediatly lose interest in peer
+			// immediately lose interest in peer
 			interested_in_other_peer =false;
 			lastNeededUndonePieceChange =Long.MAX_VALUE;
 
@@ -1167,9 +1170,9 @@ implements PEPeerTransport
 		if (Logger.isEnabled()){
 			String str;
 			if ( close_reason_in != 0 ){
-				str = " (code_in" + close_reason_in + ")";
+				str = " (code_in " + close_reason_in + ")";
 			}else if ( close_reason_out != 0 ){
-				str = " (code_out" + close_reason_out + ")";
+				str = " (code_out " + close_reason_out + ")";
 			}else{
 				str = "";
 			}
@@ -1403,7 +1406,7 @@ implements PEPeerTransport
 				manager.isSeeding() &&
 				!( ENABLE_LAZY_BITFIELD || manual_lazy_bitfield_control || manager.isSuperSeedMode());
 
-			// maintain this for any kinds of compatability
+			// maintain this for any kinds of compatibility
 
 		data_dict.put( "upload_only", new Long(upload_only? 1L : 0L));
 
@@ -1527,8 +1530,8 @@ implements PEPeerTransport
 		if (  network != AENetworkClassifier.AT_PUBLIC ){
 			
 			local_tcp_port	= 6881;
-			local_udp_port	= 6881;
-			local_udp2_port	= 6881;
+			local_udp_port	= 0;
+			local_udp2_port	= 0;
 			defaultV6		= null;
 		}
 		
@@ -1623,7 +1626,7 @@ implements PEPeerTransport
 
 	/**
 	 * Checks if this peer is a seed or not by trivially checking if
-	 * thier Have bitflags exisits and shows a number of bits set equal
+	 * their Have bitflags exists and shows a number of bits set equal
 	 * to the torrent # of pieces (and the torrent # of pieces is >0)
 	 */
 	private void checkSeed()
@@ -2211,7 +2214,7 @@ implements PEPeerTransport
 	}
 
 	/**
-	 * @return null if no bitfield has been recieved yet
+	 * @return null if no bitfield has been received yet
 	 * else returns BitFlags indicating what pieces the peer has
 	 */
 	@Override
@@ -2620,9 +2623,29 @@ implements PEPeerTransport
 
 		final long mono_now = SystemTime.getMonotonousTime();
 		
-			//make sure we time out stalled connections
+		if ( connection_state == PEPeerTransport.CONNECTION_CONNECTING ){
+
+			// had reports of connections stuck in this state forever, even though we're supposed to 
+			// run a timeout on them
+			
+			if ( outbound_connection_start > 0 && mono_now - outbound_connection_start > 2*60*1000 ){
+				
+				closeConnectionInternally( "timeout: waiting for connection", Transport.CR_TIMEOUT, false, true );
+				
+				return true;
+			}
+			
+			if ( connection != null ){
+				
+				Transport transport = connection.getTransport();
+				
+				if ( transport != null && transport.isClosed()){
+					
+					closeConnectionInternally( "connection seems to be closed", Transport.CR_TIMEOUT, false, true );
+				}
+			}
 		
-		if ( connection_state == PEPeerTransport.CONNECTION_FULLY_ESTABLISHED ){
+		}else if ( connection_state == PEPeerTransport.CONNECTION_FULLY_ESTABLISHED ){
 		
 				// we should always have received a message in order to be fully established so no need to check valid
 				
@@ -3147,7 +3170,7 @@ implements PEPeerTransport
 
 
 				if (Logger.isEnabled())
-					Logger.log(new LogEvent(this, LOGID, "Handshake mistakingly indicates"
+					Logger.log(new LogEvent(this, LOGID, "Handshake mistakenly indicates"
 							+ " extended AZ messaging support...ignoring."));
 
 				return MESSAGING_BT_ONLY;
@@ -5452,7 +5475,7 @@ implements PEPeerTransport
 	{
 		if ( client_peer_id != null ){
 
-				// disable the exchange of location targetted peers
+				// disable the exchange of location targeted peers
 
 			boolean ok = !client_peer_id.startsWith( PeerClassifier.CACHE_LOGIC );
 
@@ -5487,10 +5510,12 @@ implements PEPeerTransport
 
 		if( pex_item != null && manager.isPeerExchangeEnabled()) {
 
-			if ( peer_item_identity.getNetwork() == AENetworkClassifier.AT_PUBLIC ){
+			String net = peer_item_identity.getNetwork();
+			
+			if ( net == AENetworkClassifier.AT_PUBLIC ){
 
-				final PeerItem[] adds = pex_item.getNewlyAddedPeerConnections( AENetworkClassifier.AT_PUBLIC );
-				final PeerItem[] drops = pex_item.getNewlyDroppedPeerConnections( AENetworkClassifier.AT_PUBLIC );
+				PeerItem[] adds = pex_item.getNewlyAddedPeerConnections( AENetworkClassifier.AT_PUBLIC );
+				PeerItem[] drops = pex_item.getNewlyDroppedPeerConnections( AENetworkClassifier.AT_PUBLIC );
 
 				if( (adds != null && adds.length > 0) || (drops != null && drops.length > 0) ) {
 					if (ut_pex_enabled) {
@@ -5507,6 +5532,16 @@ implements PEPeerTransport
 				if ( encoder instanceof LTMessageEncoder ){
 
 					((LTMessageEncoder)encoder).handleCustomExtension( LTMessageEncoder.CET_PEX, new Object[]{ pex_item });
+					
+				}else if ( !ut_pex_enabled ){
+					
+					PeerItem[] adds = pex_item.getNewlyAddedPeerConnections( net );
+					PeerItem[] drops = pex_item.getNewlyDroppedPeerConnections( net );
+
+					if ((adds != null && adds.length > 0) || (drops != null && drops.length > 0)){
+						
+						connection.getOutgoingMessageQueue().addMessage( new AZPeerExchange( manager.getTargetHash(), adds, drops, other_peer_pex_version ), false );
+					}
 				}
 			}
 		}
@@ -5558,14 +5593,19 @@ implements PEPeerTransport
 			if( added != null ) {
 				for( int i=0; i < added.length; i++ ) {
 					PeerItem pi = added[i];
-					manager.peerDiscovered( this, pi );
-					pex_item.addConnectedPeer( pi );
+					if ( network == pi.getNetwork()){
+						manager.peerDiscovered( this, pi );
+						pex_item.addConnectedPeer( pi );
+					}
 				}
 			}
 
 			if( dropped != null ) {
 				for( int i=0; i < dropped.length; i++ ) {
-					pex_item.dropConnectedPeer( dropped[i] );
+					PeerItem pi = dropped[i];
+					if ( network == pi.getNetwork()){
+						pex_item.dropConnectedPeer( pi );
+					}
 				}
 			}
 		}else{
@@ -6504,6 +6544,13 @@ implements PEPeerTransport
 	public void setTaggableTransientProperty(String key, Object value) {
 	}
 
+	@Override
+	public PeerDescriptor 
+	getDescriptor()
+	{
+		return( PeerItemFactory.getDescriptor( this ));
+	}
+	
 	@Override
 	public void
 	generateEvidence(

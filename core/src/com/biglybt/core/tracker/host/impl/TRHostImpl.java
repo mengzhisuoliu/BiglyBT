@@ -348,19 +348,19 @@ TRHostImpl
 
 		throws TRHostException
 	{
+		// non-persistent additions should know what they're doing regarding
+		// announce URL
+
+		if ( persistent && state != TRHostTorrent.TS_PUBLISHED ){
+
+			if ( host_add_announce_urls ){
+
+				addTrackerAnnounce( torrent );
+			}
+		}
+
 		try{
 			this_mon.enter();
-
-				// non-persistent additions should know what they're doing regarding
-				// announce URL
-
-			if ( persistent && state != TRHostTorrent.TS_PUBLISHED ){
-
-				if ( host_add_announce_urls ){
-
-					addTrackerAnnounce( torrent );
-				}
-			}
 
 			TRHostTorrent	ht = lookupHostTorrent( torrent );
 
@@ -1402,7 +1402,7 @@ TRHostImpl
 	}
 
 		// see comment in TRHostTorrentHost impl for reason for this delegation + monitor
-		// aquisition
+		// acquisition
 
 	protected void
 	startTorrent(

@@ -58,6 +58,7 @@ import com.biglybt.core.logging.LogAlert;
 import com.biglybt.core.logging.LogEvent;
 import com.biglybt.core.logging.LogIDs;
 import com.biglybt.core.logging.Logger;
+import com.biglybt.core.lws.LightWeightSeedManager;
 import com.biglybt.core.nat.NATTraverser;
 import com.biglybt.core.networkmanager.NetworkManager;
 import com.biglybt.core.networkmanager.admin.NetworkAdmin;
@@ -226,7 +227,7 @@ CoreImpl
 	
 	private boolean					ll_started;
 	
-	private final List<CoreOperationListener>				operation_listeners		= new ArrayList<>();
+	private final CopyOnWriteList<CoreOperationListener>	operation_listeners		= new CopyOnWriteList<>();
 	private final CopyOnWriteList<CoreOperation>			operations				= new CopyOnWriteList<>();
 	
 	private final CopyOnWriteList<PowerManagementListener>	power_listeners = new CopyOnWriteList<>();
@@ -350,6 +351,8 @@ CoreImpl
 	
 			PeerManager.getSingleton();
 	
+			LightWeightSeedManager.getSingleton();
+			
 			if (DEBUG_STARTUPTIME) {
 				logTime("Init PeerManager");
 			}
@@ -3226,7 +3229,7 @@ CoreImpl
 		CoreOperationTask 		task )
 	{
 		CoreOperation op =
-				new CoreOperation()
+				new CoreOperation.CoreOperationAdapter()
 				{
 					@Override
 					public int
@@ -3281,7 +3284,15 @@ CoreImpl
 	addOperation(
 		CoreOperation		op )
 	{
-		operations.add( op );
+		synchronized( operations ){
+			
+			if ( op.isRemoved()){
+				
+				return;
+			}
+
+			operations.add( op );
+		}
 		
 		for ( CoreOperationListener l: operation_listeners ){
 			
@@ -3300,7 +3311,16 @@ CoreImpl
 	removeOperation(
 		CoreOperation		op )
 	{
-		if ( operations.remove( op )){
+		boolean was_added;
+		
+		synchronized( operations ){
+			
+			was_added = operations.remove( op );
+				
+			op.setRemoved();
+		}
+		
+		if ( was_added ){
 		
 			for ( CoreOperationListener l: operation_listeners ){
 				

@@ -92,8 +92,15 @@ NetworkAdmin
 	public abstract InetAddress
 	getMultiHomedOutgoingRoundRobinBindAddress(InetAddress target);
 
+	public String
+	getNetworkInterfacesAsString()
+	{
+		return( getNetworkInterfacesAsString( false ));
+	}
+	
 	public abstract String
-	getNetworkInterfacesAsString();
+	getNetworkInterfacesAsString(
+		boolean only_with_addresses );
 
 	public abstract InetAddress[]
 	getAllBindAddresses(
@@ -258,6 +265,10 @@ NetworkAdmin
 
 		throws NetworkAdminException;
 
+	public abstract boolean
+	isRecentPublicIPAddress(
+		InetAddress	address );
+	
 	public abstract InetAddress
 	getDefaultPublicAddress();
 

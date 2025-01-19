@@ -30,6 +30,7 @@ import com.biglybt.core.Core;
 import com.biglybt.core.CoreFactory;
 import com.biglybt.core.CoreRunningListener;
 import com.biglybt.core.util.*;
+import com.biglybt.core.versioncheck.VersionCheckClient;
 import com.biglybt.pifimpl.local.PluginInitializer;
 import com.biglybt.ui.UIFunctionsManager;
 import com.biglybt.ui.UserPrompterResultListener;
@@ -480,26 +481,18 @@ SBC_SearchResultsView
 
 			button.setSelection( !deselected_engines.contains( engine.getUID()));
 
-			Image image =
-				getIcon(
-					engine,
-					new ImageLoadListener() {
+			getIcon(
+				engine,
+				new ImageLoadListener() {
 
-						@Override
-						public void imageLoaded(Image image) {
-							button.setImage( image );
-						}
-					});
-
-			if ( image != null ){
-
-				try{
-					button.setImage( image );
-					
-				}catch( Throwable e ){
-					
-				}
-			}
+					@Override
+					public void 
+					imageLoaded(
+						Image image) 
+					{
+						button.setImage( image );
+					}
+				});
 
 			button.addSelectionListener(
 				new SelectionAdapter() {
@@ -656,9 +649,33 @@ SBC_SearchResultsView
 		btnAddEdit.addSelectionListener(new SelectionListener() {
 			@Override
 			public void widgetSelected(SelectionEvent e) {
+				
 				UIFunctions functions = UIFunctionsManager.getUIFunctions();
-				if (functions != null) {
-					functions.viewURL(Constants.URL_SEARCH_ADDEDIT, null, "");
+				
+				if ( functions != null ){
+					
+					String server = Constants.URL_SEARCH_ADDEDIT;
+					
+					try{
+						Map vc_data = VersionCheckClient.getSingleton().getMostRecentVersionCheckData();
+						
+						if ( vc_data != null ){
+							
+							byte[] b_ss = (byte[])vc_data.get( "search_server" );
+						
+							if ( b_ss != null ){
+										
+								String ss = new String( b_ss, "UTF-8" );
+											
+								server = ss;
+							}
+						}
+					}catch( Throwable f ){
+					}
+					
+					// server = "http://127.0.0.1:9899/xsearch/engineselector.php?azid=anonymous&azv=5.7.5.0&locale=en_US&os.name=Windows%207&vzemb=1";
+					
+					functions.viewURL(server, null, "");
 				}
 			}
 
@@ -1011,6 +1028,39 @@ SBC_SearchResultsView
 
 		tableManager.registerColumn(
 			SBC_SearchResult.class,
+			ColumnSearchSubResultSeeds.COLUMN_ID,
+				new TableColumnCreationListener() {
+
+					@Override
+					public void tableColumnCreated(TableColumn column) {
+						new ColumnSearchSubResultSeeds(column);
+					}
+				});
+
+		tableManager.registerColumn(
+			SBC_SearchResult.class,
+			ColumnSearchSubResultPeers.COLUMN_ID,
+				new TableColumnCreationListener() {
+
+					@Override
+					public void tableColumnCreated(TableColumn column) {
+						new ColumnSearchSubResultPeers(column);
+					}
+				});
+
+		tableManager.registerColumn(
+			SBC_SearchResult.class,
+			ColumnSearchSubResultGrabbed.COLUMN_ID,
+				new TableColumnCreationListener() {
+
+					@Override
+					public void tableColumnCreated(TableColumn column) {
+						new ColumnSearchSubResultGrabbed(column);
+					}
+				});
+		
+		tableManager.registerColumn(
+			SBC_SearchResult.class,
 			ColumnSearchSubResultRatings.COLUMN_ID,
 				new TableColumnCreationListener() {
 
@@ -1127,6 +1177,8 @@ SBC_SearchResultsView
 			}
 		}
 
+		col_filter_helper = null;
+		
 		MetaSearchManagerFactory.getSingleton().getMetaSearch().removeListener( this );
 
 		Utils.disposeSWTObjects(new Object[] {
@@ -1226,6 +1278,8 @@ SBC_SearchResultsView
 			tooltip += MessageText.getString("column.filter.tt.line2");
 
 			bubbleTextBox.setTooltip( tooltip );
+						
+			bubbleTextBox.setMessage( MessageText.getString( "Button.search2" ) );
 		}
 
 		tv_subs_results.setRowDefaultHeight(COConfigurationManager.getIntParameter( "Search Subs Row Height" ));
@@ -1341,11 +1395,16 @@ SBC_SearchResultsView
 
 							for ( SBC_SearchResult result: results ){
 
-								if ( buffer.length() > 0 ){
-									buffer.append( "\r\n" );
-								}
+								byte[] hash = result.getHash();
 
-								buffer.append( getDownloadURI( result ));
+								if ( hash != null && hash.length > 0 ){
+								
+									if ( buffer.length() > 0 ){
+										buffer.append( "\r\n" );
+									}
+	
+									buffer.append( getDownloadURI( result ));
+								}
 							}
 							ClipboardCopy.copyToClipBoard( buffer.toString());
 						}
@@ -1458,42 +1517,26 @@ SBC_SearchResultsView
 		return( uri );
 	}
 
-	public Image
-	getIcon(
-		final SBC_SearchResult		result )
-	{
-		return( getIcon( result.getEngine(), result ));
-	}
-
-	public Image
+	public void
 	getIcon(
 		Engine					engine,
-		ImageLoadListener		result )
-	{
-		return getIconSupport( engine, result );
-	}
-	
-	private Image
-	getIconSupport(
-		Engine					engine,
-		ImageLoadListener		result )
+		ImageLoadListener		listener )
 	{
 		String icon = engine.getIcon();
+		
 		if ( icon == null ){
-			return null;
+			
+			listener.imageLoaded( null );
 		}
 
-		return ImageLoader.getInstance().getUrlImage(
+		ImageLoader.getInstance().getUrlImage(
 			icon,
 			new Point(0, 16),
-			(image, key, returnedImmediately) -> {
+			(image, key, returnedImmediately)->{
+				
 				loadedImageIDs.add(key);
-
-				if (returnedImmediately) {
-					return;
-				}
-
-				result.imageLoaded( image );
+				
+				listener.imageLoaded( image );
 			});
 	}
 

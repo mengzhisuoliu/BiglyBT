@@ -35,7 +35,7 @@ import com.biglybt.core.peermanager.messaging.Message;
 import com.biglybt.core.peermanager.piecepicker.util.BitFlags;
 import com.biglybt.core.tag.Taggable;
 import com.biglybt.pif.network.Connection;
-import com.biglybt.pif.peers.PeerReadRequest;
+import com.biglybt.pif.peers.PeerDescriptor;
 
 
 /**
@@ -186,7 +186,7 @@ PEPeer
 
 	/**
 	 * checks several factors within the object so the caller wouldn't need to
-	 * for convienience and speed.
+	 * for convenience and speed.
 	 * @return true if none of several criteria indicate a request can't be made of the peer
 	 */
 	public boolean isDownloadPossible();
@@ -512,4 +512,7 @@ PEPeer
 
 	public boolean
 	isClosed();
+	
+	 public PeerDescriptor
+	 getDescriptor();
 }

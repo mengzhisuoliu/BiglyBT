@@ -245,6 +245,9 @@ AllTrackersManager
 		public int
 		getTorrentCount();
 		
+		public int
+		getActiveRequestCount();
+		
 		/**
 		 * Not persisted - i.e. session total
 		 * @return
@@ -275,6 +278,12 @@ AllTrackersManager
 		
 		public long
 		getPrivateLagMillis();
+		
+		public List<String>
+		getPublicActive();
+		
+		public List<String>
+		getPrivateActive();
 		
 		public int
 		getPublicScheduledCount();

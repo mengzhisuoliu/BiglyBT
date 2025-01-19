@@ -710,10 +710,9 @@ public class Initializer
 			
 			OpenTorrentOptionsWindow.initialise();
 			
-			PopOutManager.initialise();
+			PopOutManager.initialise( core );
 			
-		}
-		finally{
+		}finally{
 
 			if ( !main_window_will_report_complete ){
 				init_task.release();
@@ -1033,7 +1032,7 @@ public class Initializer
 			clientMsgContext.setMessageDispatcher(new MessageDispatcherSWT(clientMsgContext));
 			clientMsgContext.addMessageListener(new TorrentListener());
 			clientMsgContext.addMessageListener(new VuzeListener());
-			clientMsgContext.addMessageListener(new DisplayListener());
+			clientMsgContext.addMessageListener(new DisplayListener(null));
 			clientMsgContext.addMessageListener(new ConfigListener(null));
 		}
 	}

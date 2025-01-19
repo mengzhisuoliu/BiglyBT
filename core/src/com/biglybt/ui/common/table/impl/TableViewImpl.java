@@ -117,7 +117,7 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 	/** Prefix for retrieving text from the properties file (MessageText)
 	 * Typically <i>TableID</i> + "View"
 	 */
-	protected String propertiesPrefix;
+	private String textPrefixID;
 
 	// What type of data is stored in this table
 	private final Class<?> classPluginDataSourceType;
@@ -230,25 +230,22 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 	 * Up to date list of selected rows, so we can access rows without being on SWT Thread.
 	 * Guaranteed to have no nulls
 	 */
-	private List<TableRowCore> selectedRows = new ArrayList<>(1);
+	private LinkedHashSet<TableRowCore> selectedRows = new LinkedHashSet<>(1);
 
 	private List<Object> listSelectedCoreDataSources;
 
 	private boolean headerVisible = true;
 
 	private boolean menuEnabled = true;
-
-	private boolean provideIndexesOnRemove = false;
-
 	
 	private LinkedList<HistoryEntry>	historyBefore 	= new LinkedList<>();
 	private LinkedList<HistoryEntry>	historyAfter	= new LinkedList<>();	
 
 	public TableViewImpl(Class<?> pluginDataSourceType, String _sTableID,
-			String _sPropertiesPrefix, Object rows_sync,
+			String _sTextPrefixID, Object rows_sync,
 			TableColumnCore[] _basicItems) {
 		classPluginDataSourceType = pluginDataSourceType;
-		propertiesPrefix = _sPropertiesPrefix;
+		textPrefixID = _sTextPrefixID;
 		tableID = _sTableID;
 		basicItems = _basicItems;
 		mapDataSourceToRow = new IdentityHashMap<>();
@@ -410,6 +407,12 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 		}
 	}
 
+	protected void triggerFocusRequested()
+	{
+		for ( TableSelectionListener l: listenersSelection) {
+			l.focusRequested();
+		}
+	}
 	/**
 	 *
 	 */
@@ -484,27 +487,26 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 		listenersExpansionChange.remove(listener);
 	}
 
+	private static AsyncDispatcher dispatcher = new AsyncDispatcher();
+	
 	public void invokeExpansionChangeListeners(final TableRowCore row, final boolean expanded ) {
 		if (listenersExpansionChange.size() == 0) {
 			return;
 		}
-		getOffUIThread(new AERunnable() {
-			@Override
-			public void runSupport() {
-				for (Iterator<TableExpansionChangeListener> iter = listenersExpansionChange.iterator(); iter.hasNext();) {
-					try{
-						if ( expanded ){
+		dispatcher.dispatch(()->{
+			for (Iterator<TableExpansionChangeListener> iter = listenersExpansionChange.iterator(); iter.hasNext();) {
+				try{
+					if ( expanded ){
 
-							iter.next().rowExpanded(row);
+						iter.next().rowExpanded(row);
 
-						}else{
+					}else{
 
-							iter.next().rowCollapsed(row);
-						}
-					}catch( Throwable e){
-
-						Debug.out( e );
+						iter.next().rowCollapsed(row);
 					}
+				}catch( Throwable e){
+
+					Debug.out( e );
 				}
 			}
 		});
@@ -569,13 +571,15 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 
 
 	@Override
-	public void runForAllRows(TableGroupRowRunner runner) {
-		runForAllRows( runner, false );
+	public int runForAllRows(TableGroupRowRunner runner) {
+		return( runForAllRows( runner, false ));
 	}
 	
-	private void runForAllRows(TableGroupRowRunner runner, boolean doSubRows) {
+	private int runForAllRows(TableGroupRowRunner runner, boolean doSubRows) {
 		
 		// put to array instead of synchronised iterator, so that runner can remove
+		
+		int done = 0;
 		
 		if ( doSubRows ){
 			
@@ -587,54 +591,70 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 				
 				runner.run(rows[i]);
 
+				done++;
+				
 				int numSubRows = rows[i].getSubItemCount();
 				if (numSubRows > 0) {
 					TableRowCore[] subRows = rows[i].getSubRowsRecursive(false);
 					for (TableRowCore subRow : subRows) {
 						if (subRow != null) {
 							runner.run(subRow);
+							
+							done++;
 						}
 					}
 				}
 			}
 			
+			return( done );
+					
 		}else{
 			TableRowCore[] rows = getRows();
 			
 			if (runner.run(rows)) {
-				return;
+				return( rows.length );
 			}
 	
 			for (int i = 0; i < rows.length; i++) {
 				runner.run(rows[i]);
 			}
+			
+			return( rows.length );
 		}
 	}
 
 	// see common.tableview
 	@Override
-	public void runForAllRows(TableGroupRowVisibilityRunner runner) {
+	public int runForAllRows(TableGroupRowVisibilityRunner runner) {
 		if (isDisposed()) {
-			return;
+			return( 0 );
 		}
 
 		// put to array instead of synchronised iterator, so that runner can remove
 		TableRowCore[] rows = getRows();
 
+		int done = 0;
+		
 		for (int i = 0; i < rows.length; i++) {
 			boolean isRowVisible = isRowVisible(rows[i]);
 			runner.run(rows[i], isRowVisible);
 
+			done++;
+			
 			int numSubRows = rows[i].getSubItemCount();
 			if (numSubRows > 0) {
 				TableRowCore[] subRows = rows[i].getSubRowsRecursive(false);
 				for (TableRowCore subRow : subRows) {
 					if (subRow != null) {
 						runner.run(subRow, isRowVisible(subRow));
+						
+						done++;
 					}
 				}
 			}
 		}
+		
+		return( done );
 	}
 
 
@@ -644,9 +664,9 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 	 * @param runner Code to run for each selected row/datasource
 	 */
 	@Override
-	public void runForSelectedRows(TableGroupRowRunner runner) {
+	public int runForSelectedRows(TableGroupRowRunner runner) {
 		if (isDisposed()) {
-			return;
+			return( 0 );
 		}
 
 		TableRowCore[] rows;
@@ -660,6 +680,8 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 				runner.run(row);
 			}
 		}
+		
+		return( rows.length );
 	}
 
 	@Override
@@ -677,67 +699,75 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 		if (filter.eventUpdate != null) {
 			filter.eventUpdate.cancel();
 			filter.text = filter.nextText;
-			filter.checker.filterSet(filter.text);
+			filter.checker.filterSet(filter.text, filter.regex);
 		}
 		filter.eventUpdate = null;
 
 		boolean changed = false;
 
+		
 		synchronized (rows_sync) {
 			DATASOURCETYPE[] unfilteredArray = (DATASOURCETYPE[]) listUnfilteredDataSources.keySet().toArray();
 			if (DEBUGADDREMOVE) {
 				debug("filter: unfilteredArray is " + unfilteredArray.length);
 			}
 
-			if (getFilterSubRows()){
-				
-				for (Iterator<TableRowCore> iter = sortedRows.iterator(); iter.hasNext();) {
-					TableRowCore row = iter.next();
-					for ( TableRowCore sr: row.getSubRowsWithNull()){
-						if (sr.refilter()){
-							
-							changed = true;
+			Map<Object,Object>	cache = new IdentityHashMap<>();
+
+			try{
+				filter.checker.setRefilterCache( cache );
+				if (getFilterSubRows()){
+					
+					for (Iterator<TableRowCore> iter = sortedRows.iterator(); iter.hasNext();) {
+						TableRowCore row = iter.next();
+						for ( TableRowCore sr: row.getSubRowsWithNull()){
+							if (sr.refilter()){
+								
+								changed = true;
+							}
 						}
 					}
 				}
-			}
-
-			Collection<DATASOURCETYPE> existing = getDataSources();
-			List<DATASOURCETYPE> listRemoves = new ArrayList<>();
-			List<DATASOURCETYPE> listAdds = new ArrayList<>();
-
-			for (DATASOURCETYPE dst : unfilteredArray) {
-				boolean bHave = existing.contains(dst);
-				boolean isOurs;
-				
-				try{
-					isOurs = filterCheck(dst);
+	
+				Collection<DATASOURCETYPE> existing = getDataSources();
+				List<DATASOURCETYPE> listRemoves = new ArrayList<>();
+				List<DATASOURCETYPE> listAdds = new ArrayList<>();
+	
+				for (DATASOURCETYPE dst : unfilteredArray) {
+					boolean bHave = existing.contains(dst);
+					boolean isOurs;
 					
-				}catch( PatternSyntaxException e ){
-					// get this with malformed filter regex, ignore
-					isOurs = true;
-				}	
-				
-				if (!isOurs) {
-					if (bHave) {
-						listRemoves.add(dst);
-					}
-				} else {
-					if (!bHave) {
-						listAdds.add(dst);
+					try{
+						isOurs = filterCheck(dst);
+						
+					}catch( PatternSyntaxException e ){
+						// get this with malformed filter regex, ignore
+						isOurs = true;
+					}	
+					
+					if (!isOurs) {
+						if (bHave) {
+							listRemoves.add(dst);
+						}
+					} else {
+						if (!bHave) {
+							listAdds.add(dst);
+						}
 					}
 				}
-			}
-			if (listRemoves.size() > 0) {
-				removeDataSources((DATASOURCETYPE[]) listRemoves.toArray());
-			}
-			if (listAdds.size() > 0) {
-				addDataSources((DATASOURCETYPE[]) listAdds.toArray(), true);
-			}
-
-			// add back the ones removeDataSources removed
-			for ( DATASOURCETYPE ds: listRemoves ){
-				listUnfilteredDataSources.put(ds,"");
+				if (listRemoves.size() > 0) {
+					removeDataSources((DATASOURCETYPE[]) listRemoves.toArray());
+				}
+				if (listAdds.size() > 0) {
+					addDataSources((DATASOURCETYPE[]) listAdds.toArray(), true);
+				}
+	
+				// add back the ones removeDataSources removed
+				for ( DATASOURCETYPE ds: listRemoves ){
+					listUnfilteredDataSources.put(ds,"");
+				}
+			}finally{
+				filter.checker.setRefilterCache( null );
 			}
 		}
 		
@@ -809,7 +839,7 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 	
 					dataSourcesAdd = dataSourcesToAdd.keySet().toArray();
 	
-					dataSourcesToAdd.clear();
+					dataSourcesToAdd = new IdentityHashMap<>();	// release space, .clear() sucks
 				}
 	
 				if (dataSourcesToRemove.size() > 0) {
@@ -817,7 +847,7 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 					if (DEBUGADDREMOVE && dataSourcesRemove.length > 1) {
 						debug("Streamlining removing " + dataSourcesRemove.length + " rows");
 					}
-					dataSourcesToRemove.clear();
+					dataSourcesToRemove = new IdentityHashMap<>(); // release space, .clear() sucks
 				}
 			}
 	
@@ -1496,7 +1526,9 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 		synchronized (rows_sync) {
 
 			itemsToRemove = new ArrayList<>(mapDataSourceToRow.values());
-			mapDataSourceToRow.clear();
+			
+			mapDataSourceToRow = new IdentityHashMap<>();	// better than .clear() as it "trimsToSize"
+			
 			sortedRows.clear();
 
 			dataSourcesToAdd.clear();
@@ -1549,41 +1581,36 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 
 		ArrayList<TableRowCore> removedWithSelection = new ArrayList<>();
 		synchronized (rows_sync) {
-  		for (int i = 0; i < dataSources.length; i++) {
-  			if (dataSources[i] == null) {
-  				continue;
-  			}
+			Set<TableRowCore> toRemove = new IdentityHashSet<>();
+					
+			for (int i = 0; i < dataSources.length; i++) {
+				if (dataSources[i] == null) {
+					continue;
+				}
 
-  			TableRowCore item = mapDataSourceToRow.get(dataSources[i]);
-  			if (item != null) {
-  				if (isProvideIndexesOnRemove()) {
-    				// use sortedRows position instead of item.getIndex(), because
-    				// getIndex may have a wrong value (unless we fillRowGaps() which
-    				// is more time consuming and we do afterwards anyway)
-    				int index = sortedRows.indexOf(item);
-    				indexesToRemove.add(index);
-    				if (DEBUGADDREMOVE) {
-    					if (i != 0) {
-    						sbWillRemove.append(", ");
-    					}
-    					sbWillRemove.append(index);
-    				}
-  				}
+				TableRowCore item = mapDataSourceToRow.get(dataSources[i]);
+				if (item != null) {
+					itemsToRemove.add(item);
+					mapDataSourceToRow.remove(dataSources[i]);
+					triggerListenerRowRemoved(item);
+					toRemove.add(item);
+					if ( selectedRows.remove(item)){
+						removedWithSelection.add( item );
+					}
 
-  				itemsToRemove.add(item);
-  				mapDataSourceToRow.remove(dataSources[i]);
-  				triggerListenerRowRemoved(item);
-  				sortedRows.remove(item);
-  				if ( selectedRows.remove(item)){
-  					removedWithSelection.add( item );
-  				}
-
-  				rows_removed++;
-  			}
-  		}
-  		if (rows_removed > 0) {
-  			listSelectedCoreDataSources = null;
-  		}
+					rows_removed++;
+				}
+			}
+			if (rows_removed > 0) {
+				listSelectedCoreDataSources = null;
+				List<TableRowCore> newSortedRows = new ArrayList<>( sortedRows.size());
+				for (TableRowCore row: sortedRows ){
+					if ( !toRemove.contains( row )){
+						newSortedRows.add( row );
+					}
+				}
+				sortedRows = newSortedRows;
+			}
 		}
 
 		if (DEBUGADDREMOVE) {
@@ -1628,10 +1655,7 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 		if ( f != null ){
 			TableViewFilterCheck<DATASOURCETYPE> checker = f.checker;
 
-			if ( checker instanceof TableViewFilterCheck.TableViewFilterCheckEx ){
-
-				((TableViewFilterCheck.TableViewFilterCheckEx)checker).viewChanged( this );
-			}
+			checker.viewChanged( this );
 		}
 	}
 
@@ -1733,7 +1757,7 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 					
 					for ( TableRowCore r: sortedRows ){
 						// TODO: Change to sortColumn list
-						if ( r.sortSubRows(sortColumns.get(0) )){
+						if ( r.sortSubRows( sortColumns )){
 							needsUpdate = true;
 							orderChanged = true;
 						}
@@ -1792,6 +1816,14 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 
 	public abstract void visibleRowsChanged();
 
+	private final AtomicInteger	visibleRowChangeDisabled = new AtomicInteger();
+	
+	public boolean
+	visibleRowChangeDisabled()
+	{
+		return( visibleRowChangeDisabled.get() > 0 );
+	}
+	
 	public abstract void uiRemoveRows(TableRowCore[] rows, Integer[] rowIndexes);
 
 	public abstract int uiGuessMaxVisibleRows();
@@ -1829,134 +1861,251 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 
 		TableRowCore[] selectedRows = getSelectedRows();
 
-		boolean bWas0Rows = getRowCount() == 0;
-		try {
-
-			if (DEBUGADDREMOVE) {
-				debug("--" + " Add " + dataSources.length + " rows to SWT");
-			}
-
-			long lStartTime = SystemTime.getCurrentTime();
-
-			final List<TableRowCore> rowsAdded = new ArrayList<>();
-
-			// add to sortedRows list in best position.
-			// We need to be in the SWT thread because the rowSorter may end up
-			// calling SWT objects.
-			for (int i = 0; i < dataSources.length; i++) {
-				Object dataSource = dataSources[i];
-				if (dataSource == null) {
-					continue;
+		try{
+				// we need to suspend visible row changes otherwise other parallel activities
+				// can trigger it during the process below and cause an unsorted view to 
+				// appears before a subsequent resort which makes the code below pointless
+			
+			visibleRowChangeDisabled.incrementAndGet();
+			
+			try {
+	
+				if (DEBUGADDREMOVE) {
+					debug("--" + " Add " + dataSources.length + " rows to SWT");
 				}
-
-				TableRowCore row;
-				synchronized (rows_sync) {
-					row = mapDataSourceToRow.get(dataSource);
-				}
-				//if ((row == null) || row.isRowDisposed() || sortedRows.indexOf(row) >= 0) {
-				if (row == null || row.isRowDisposed()) {
-					continue;
-				}
-				if (!sortColumns.isEmpty()) {
-					TableCellCore[] cells = row.getSortColumnCells(null);
-					for (TableCellCore cell : cells) {
-						try {
-							cell.invalidate();
-							// refresh could have caused a thread lock if we were
-							// synchronized by rows_sync
-							cell.refresh(true);
-						} catch (Exception e) {
-							Logger.log(new LogEvent(LOGID,
-									"Minor error adding a row to table " + getTableID(), e));
-						}
-					}
-				}
-
-				synchronized (rows_sync) {
-						// check that the row item hasn't been removed in the meantime while lock 
-						// not held
+	
+				long lStartTime = SystemTime.getCurrentTime();
+	
+				final List<TableRowCore> rowsAdded = new ArrayList<>(dataSources.length);
+	
+					// algorithm below sucks for large additions
+				
+				if ( dataSources.length < 100 ){
 					
-					if (row ==  mapDataSourceToRow.get( dataSource )){
-						try {
-							int index = 0;
-							if (sortedRows.size() > 0) {
-								// If we are >= to the last item, then just add it to the end
-								// instead of relying on binarySearch, which may return an item
-								// in the middle that also is equal.
-								TableRowCore lastRow = sortedRows.get(sortedRows.size() - 1);
-								// todo: use multi-sort
-								if (sortColumns.isEmpty() || sortColumns.get(0).compare(row, lastRow) >= 0) {
-									index = sortedRows.size();
-									sortedRows.add(row);
-									if (DEBUGADDREMOVE) {
-										debug("Adding new row to bottom");
-									}
-								} else {
-									index = Collections.binarySearch(sortedRows, row, sortColumns.get(0));
-									if (index < 0) {
-										index = -1 * index - 1; // best guess
-									}
-	
-									if (index > sortedRows.size()) {
+					// add to sortedRows list in best position.
+					// We need to be in the SWT thread because the rowSorter may end up
+					// calling SWT objects.
+					
+					for (int i = 0; i < dataSources.length; i++) {
+						Object dataSource = dataSources[i];
+						if (dataSource == null) {
+							continue;
+						}
+		
+						TableRowCore row;
+						synchronized (rows_sync) {
+							row = mapDataSourceToRow.get(dataSource);
+						}
+						//if ((row == null) || row.isRowDisposed() || sortedRows.indexOf(row) >= 0) {
+						if (row == null || row.isRowDisposed()) {
+							continue;
+						}
+						if (!sortColumns.isEmpty()) {
+							TableCellCore[] cells = row.getSortColumnCells(null);
+							for (TableCellCore cell : cells) {
+								try {
+									cell.invalidate();
+									// refresh could have caused a thread lock if we were
+									// synchronized by rows_sync
+									cell.refresh(true);
+								} catch (Exception e) {
+									Logger.log(new LogEvent(LOGID,
+											"Minor error adding a row to table " + getTableID(), e));
+								}
+							}
+						}
+		
+						synchronized (rows_sync) {
+								// check that the row item hasn't been removed in the meantime while lock 
+								// not held
+							
+							if (row ==  mapDataSourceToRow.get( dataSource )){
+								try {
+									int index = 0;
+									if (sortedRows.size() > 0) {
+										// If we are >= to the last item, then just add it to the end
+										// instead of relying on binarySearch, which may return an item
+										// in the middle that also is equal.
+										TableRowCore lastRow = sortedRows.get(sortedRows.size() - 1);
+										// todo: use multi-sort
+										if (sortColumns.isEmpty() || sortColumns.get(0).compare(row, lastRow) >= 0) {
+											index = sortedRows.size();
+											sortedRows.add(row);
+											if (DEBUGADDREMOVE) {
+												debug("Adding new row to bottom");
+											}
+										} else {
+											index = Collections.binarySearch(sortedRows, row, sortColumns.get(0));
+											if (index < 0) {
+												index = -1 * index - 1; // best guess
+											}
+			
+											if (index > sortedRows.size()) {
+												index = sortedRows.size();
+											}
+			
+											if (DEBUGADDREMOVE) {
+												debug("Adding new row at position " + index + " of "
+														+ (sortedRows.size() - 1));
+											}
+											sortedRows.add(index, row);
+										}
+									} else {
+										if (DEBUGADDREMOVE) {
+											debug("Adding new row to bottom (1st Entry)");
+										}
 										index = sortedRows.size();
+										sortedRows.add(row);
 									}
+			
+									rowsAdded.add(row);
+			
+									// XXX Don't set table item here, it will mess up selected rows
+									//     handling (which is handled in fillRowGaps called later on)
+									//row.setTableItem(index);
+			
+			
+									//row.setIconSize(ptIconSize);
+								} catch (Exception e) {
+									e.printStackTrace();
+									Logger.log(new LogEvent(LOGID, "Error adding a row to table "
+											+ getTableID(), e));
+									try {
+										if (!sortedRows.contains(row)) {
+											sortedRows.add(row);
+										}
+									} catch (Exception e2) {
+										Debug.out(e2);
+									}
+								}
+							}
+						}
+					} // for dataSources
+				}else{
+					
+						// lots added, just add to bottom and then do a full sort
+					
+					synchronized( rows_sync ){
+						
+						List<TableRowCore> newSortedRows = new ArrayList<>( sortedRows.size() + dataSources.length );
+						
+						newSortedRows.addAll( sortedRows );
+						
+						sortedRows = newSortedRows;
+					}
+					
+					int numSortCols = sortColumns.size();
 	
-									if (DEBUGADDREMOVE) {
-										debug("Adding new row at position " + index + " of "
-												+ (sortedRows.size() - 1));
+					for ( int i = 0; i < dataSources.length; i++){
+						
+						Object dataSource = dataSources[i];
+						
+						if ( dataSource == null ){
+							
+							continue;
+						}
+		
+						TableRowCore row;
+						
+						synchronized( rows_sync ){
+							
+							row = mapDataSourceToRow.get(dataSource);
+						}
+						
+						if ( row == null || row.isRowDisposed()){
+								
+							continue;
+						}
+											
+						if ( numSortCols > 0 ){
+							
+							for (TableColumnCore sortColumn : sortColumns) {
+								String sColumnID = sortColumn.getName();
+								TableCellCore[] cells = row.getSortColumnCells(sColumnID);
+								for (TableCellCore cell : cells) {
+									try{
+										cell.invalidate();
+									
+										cell.refresh(true);
+									}catch( Throwable e ){
+										
 									}
-									sortedRows.add(index, row);
 								}
-							} else {
-								if (DEBUGADDREMOVE) {
-									debug("Adding new row to bottom (1st Entry)");
+								TableRowCore[] subs = row.getSubRowsRecursive(true);
+	
+								for (TableRowCore sr : subs) {
+									cells = sr.getSortColumnCells(sColumnID);
+									for (TableCellCore cell : cells) {
+										try{
+											cell.invalidate();
+										
+											cell.refresh(true);
+										}catch( Throwable e ){
+											
+										}
+									}
 								}
-								index = sortedRows.size();
+							}
+						}
+	
+						synchronized( rows_sync ){
+							
+							if ( row ==  mapDataSourceToRow.get( dataSource )){
+							
 								sortedRows.add(row);
 							}
-	
+						
 							rowsAdded.add(row);
-	
-							// XXX Don't set table item here, it will mess up selected rows
-							//     handling (which is handled in fillRowGaps called later on)
-							//row.setTableItem(index);
-	
-	
-							//row.setIconSize(ptIconSize);
-						} catch (Exception e) {
-							e.printStackTrace();
-							Logger.log(new LogEvent(LOGID, "Error adding a row to table "
-									+ getTableID(), e));
-							try {
-								if (!sortedRows.contains(row)) {
-									sortedRows.add(row);
-								}
-							} catch (Exception e2) {
-								Debug.out(e2);
+						}
+					}
+					
+					if ( numSortCols > 0 ){
+						
+						synchronized( rows_sync ){
+								
+							if ( numSortCols == 1 ){
+		
+								sortedRows.sort(sortColumns.get(0));
+							
+							}else{
+								
+								sortedRows.sort((o1, o2) -> {
+									for (TableColumnCore sortColumn : sortColumns) {
+										int compare = sortColumn.compare(o1, o2);
+										if (compare != 0) {
+											return compare;
+										}
+									}
+									return 0;
+								});
 							}
 						}
 					}
 				}
-			} // for dataSources
-
-			// NOTE: if the listener tries to do something like setSelected,
-			// it will fail because we aren't done adding.
-			// we should trigger after fillRowGaps()
-			triggerListenerRowAdded(rowsAdded.toArray(new TableRowCore[0]));
-
-
-			if (DEBUGADDREMOVE) {
-				debug("Adding took " + (SystemTime.getCurrentTime() - lStartTime)
-						+ "ms");
+				// NOTE: if the listener tries to do something like setSelected,
+				// it will fail because we aren't done adding.
+				// we should trigger after fillRowGaps()
+				triggerListenerRowAdded(rowsAdded.toArray(new TableRowCore[0]));
+	
+	
+				if (DEBUGADDREMOVE) {
+					debug("Adding took " + (SystemTime.getCurrentTime() - lStartTime)
+							+ "ms");
+				}
+	
+			} catch (Exception e) {
+				Logger.log(new LogEvent(LOGID, "Error while adding row to Table "
+						+ getTableID(), e));
 			}
-
-		} catch (Exception e) {
-			Logger.log(new LogEvent(LOGID, "Error while adding row to Table "
-					+ getTableID(), e));
+			refreshenProcessDataSourcesTimer();
+			
+		}finally{
+			
+			visibleRowChangeDisabled.decrementAndGet();
 		}
-		refreshenProcessDataSourcesTimer();
-
+		
 		visibleRowsChanged();
+		
 		fillRowGaps(false);
 
 		if (selectedRows.length > 0) {
@@ -2034,10 +2183,9 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 		columnInvalidate(tableColumn, true);
 	}
 
-	// @see TableView#getPropertiesPrefix()
 	@Override
-	public String getPropertiesPrefix() {
-		return propertiesPrefix;
+	public String getTextPrefixID() {
+		return textPrefixID;
 	}
 
 
@@ -2312,7 +2460,7 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 			if (selectedRows.size() == 0) {
 				return null;
 			}
-			return selectedRows.get(0);
+			return selectedRows.iterator().next();
 		}
 	}
 
@@ -2330,7 +2478,7 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 	public Object getFirstSelectedDataSource(boolean bCoreObject) {
 		synchronized (rows_sync) {
 			if (selectedRows.size() > 0) {
-				return selectedRows.get(0).getDataSource(bCoreObject);
+				return selectedRows.iterator().next().getDataSource(bCoreObject);
 			}
 		}
 		return null;
@@ -2557,70 +2705,74 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 		System.out.println(" via " + Debug.getCompressedStackTrace(4));
 		/**/
 
-		final List<TableRowCore> oldSelectionList = new ArrayList<>();
-
-		List<TableRowCore> listNewlySelected;
+		Set<TableRowCore>	oldSelectionSet		= new LinkedHashSet<>();
+		Set<TableRowCore>	newlySelectedSet	= new LinkedHashSet<>();
+		
 		boolean somethingChanged;
+		
 		synchronized (rows_sync) {
 			if (selectedRows.size() == 0 && newSelectionArray.length == 0) {
 				return;
 			}
 
-			oldSelectionList.addAll(selectedRows);
+			oldSelectionSet.addAll(selectedRows);
+			
 			listSelectedCoreDataSources = null;
+			
 			selectedRows.clear();
-
-			listNewlySelected = new ArrayList<>(1);
 
 			// We'll remove items still selected from oldSelectionLeft, leaving
 			// it with a list of items that need to fire the deselection event.
+			
 			for (TableRowCore row : newSelectionArray) {
+				
 				if (row == null || row.isRowDisposed()) {
 					continue;
 				}
 
-				boolean existed = false;
-				for (TableRowCore oldRow : oldSelectionList) {
-					if (oldRow == row) {
-						existed = true;
-						if (!selectedRows.contains(row)) {
-							selectedRows.add(row);
-						}
-						oldSelectionList.remove(row);
-						break;
-					}
-				}
-				if (!existed) {
-					if (!selectedRows.contains(row)) {
+				if ( oldSelectionSet.contains( row )){
+					
+					if (!selectedRows.contains(row)){
+						
 						selectedRows.add(row);
 					}
-					if (!listNewlySelected.contains(row)) {
-						listNewlySelected.add(row);
+					
+					oldSelectionSet.remove(row);
+					
+				}else{
+				
+					if (!selectedRows.contains(row)){
+						
+						selectedRows.add(row);
+					}
+					
+					if (!newlySelectedSet.contains(row)) {
+						
+						newlySelectedSet.add(row);
 					}
 				}
 			}
 
-			somethingChanged = listNewlySelected.size() > 0
-					|| oldSelectionList.size() > 0;
+			somethingChanged = newlySelectedSet.size() > 0 || oldSelectionSet.size() > 0;
 					
 			if ( somethingChanged && updateHistory ){
 				
 				addHistory( 
 					new HistorySelection( 
-						oldSelectionList.toArray( new TableRowCore[ oldSelectionList.size()]), 
+							oldSelectionSet.toArray( new TableRowCore[ oldSelectionSet.size()]), 
 						selectedRows.toArray( new TableRowCore[ selectedRows.size()])));
 			}
 			
 			if (DEBUG_SELECTION) {
 				System.out.println(somethingChanged + "] +"
-						+ listNewlySelected.size() + "/-" + oldSelectionList.size()
+						+ newlySelectedSet.size() + "/-" + oldSelectionSet.size()
 						+ ";  UpdateSelectedRows via " + Debug.getCompressedStackTrace());
 			}
 		}
 
 		if (somethingChanged) {
-			TableRowCore[] selected 	= listNewlySelected.toArray(new TableRowCore[0]);
-			TableRowCore[] deselected	= oldSelectionList.toArray(new TableRowCore[0]);
+			TableRowCore[] selected 	= newlySelectedSet.toArray(new TableRowCore[0]);
+			TableRowCore[] deselected	= oldSelectionSet.toArray(new TableRowCore[0]);
 			
 			uiSelectionChanged( selected, deselected );
 			
@@ -2630,11 +2782,11 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 		}
 
 		if (trigger && somethingChanged) {
-			if (listNewlySelected.size() > 0) {
-				triggerSelectionListeners(listNewlySelected.toArray(new TableRowCore[0]));
+			if (newlySelectedSet.size() > 0) {
+				triggerSelectionListeners(newlySelectedSet.toArray(new TableRowCore[0]));
 			}
-			if (oldSelectionList.size() > 0) {
-				triggerDeselectionListeners(oldSelectionList.toArray(new TableRowCore[0]));
+			if (oldSelectionSet.size() > 0) {
+				triggerDeselectionListeners(oldSelectionSet.toArray(new TableRowCore[0]));
 			}
 
 			triggerTabViewsDataSourceChanged();
@@ -2704,14 +2856,6 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 	public abstract void triggerTabViewsDataSourceChanged();
 
 	protected abstract void uiChangeColumnIndicator();
-
-	public boolean isProvideIndexesOnRemove() {
-		return provideIndexesOnRemove;
-	}
-
-	public void setProvideIndexesOnRemove(boolean provideIndexesOnRemove) {
-		this.provideIndexesOnRemove = provideIndexesOnRemove;
-	}
 
 	@Override
 	public boolean isTableSelected() {
@@ -2867,6 +3011,12 @@ public abstract class TableViewImpl<DATASOURCETYPE>
 		apply(
 			TableRowCore[]	sel )
 		{
+				// bit of a hack to ensure that the selection change is taken note of as when
+				// we apply forward/back the table view doesn't have focus and therefore
+				// doesn't update the selected content (toolbar state, subtab focus)
+			
+			triggerFocusRequested();
+			
 			setSelectedRows( sel, true, false ) ;
 			
 			if ( sel.length > 0 ){

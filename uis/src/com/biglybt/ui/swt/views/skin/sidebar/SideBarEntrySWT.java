@@ -66,7 +66,7 @@ public class SideBarEntrySWT
 {
 	private static final boolean DARK_MODE = Utils.isDarkAppearanceNative();
 	
-	private static final boolean PAINT_BG = !Constants.isUnix;
+	private static final boolean PAINT_BG = true; // !Constants.isUnix;
 
 	private static final boolean DO_OUR_OWN_TREE_INDENT = true;
 		
@@ -406,6 +406,7 @@ public class SideBarEntrySWT
 
 		//System.out.println(id + " destroyEntry " + swtItem + "; " + Debug.getCompressedStackTrace());
 		if (swtItem == null) {
+			triggerCloseListeners( userInitiated );
 			destroyEntryAlways();
 			return;
 		}
@@ -610,7 +611,7 @@ public class SideBarEntrySWT
 	public void hide() {
 		// if we defer the show above then we should defer the hide similarly to ensure that a caller trying
 		// to show a new view before hiding the old (to avoid an intermediate blank view) ends up executing things
-		// in teh desired order
+		// in the desired order
 		Utils.execSWTThreadLater(0, new AERunnable() {
 			@Override
 			public void runSupport() {
@@ -632,15 +633,31 @@ public class SideBarEntrySWT
 			drawBounds = event.getBounds();
 		}
 		Rectangle treeArea = treeItem.getParent().getClientArea();
+		
 		if (Utils.isGTK3) {
-			// workaround bug
-  		if (treeArea.width > itemBounds.width) {
-  			itemBounds.width = treeArea.width;
-  		}
-  		if (treeArea.x < itemBounds.x) {
-  			itemBounds.x = treeArea.x;
-  		}
-  		drawBounds = itemBounds;
+				// workaround bug
+	  		if (treeArea.width > itemBounds.width) {
+	  			itemBounds.width = treeArea.width;
+	  		}
+	  		if (treeArea.x < itemBounds.x) {
+	  			itemBounds.x = treeArea.x;
+	  		}
+	  		itemBounds.y		= drawBounds.y;
+	  		itemBounds.height	= drawBounds.height;
+	  		
+	  		drawBounds = itemBounds;
+	  		
+		}else if ( Constants.isOSX ){
+			
+			if ( drawBounds.height > itemBounds.height ){
+				
+					// -1 needed on parg's old test setup for some reason otherwise drag-over
+					// causes cheesing
+				
+				itemBounds.height	= drawBounds.height-1;
+				
+				drawBounds = itemBounds;
+			}
 		}
 
 		String text = getTitle();
@@ -1127,7 +1144,11 @@ public class SideBarEntrySWT
 		Color fgText = Colors.black;
 		boolean selected = (detail & SWT.SELECTED) > 0;
 		//boolean focused = (detail & SWT.FOCUSED) > 0;
-		boolean hot = (detail & SWT.HOT) > 0;
+		
+		boolean isDragging = sidebar.draggingOver == this;
+		boolean isHovering = sidebar.mousingOver == this;
+		
+		boolean hot = isHovering;// || (detail & SWT.HOT) > 0;
 		if (selected) {
 			attention_start = -1;
 		}else{
@@ -1202,22 +1223,48 @@ public class SideBarEntrySWT
 			if (bg != null) {
 				gc.setBackground(bg);
 			}
-
-			if (this == sidebar.draggingOver || hot) {
+			
+			if ( isDragging || hot) {
+				Color c;
+				
 				if ( Utils.isDarkAppearanceNativeWindows()){
-					gc.setBackground( Colors.getSystemColor( gc.getDevice(), SWT.COLOR_WIDGET_NORMAL_SHADOW ));
-
-				}else{
-					Color c = skin.getSkinProperties().getColor("color.sidebar.drag.bg");
-					gc.setBackground(c);
+					
+					if ( isDragging ){
+						c = Colors.getSystemColor( gc.getDevice(), SWT.COLOR_WIDGET_NORMAL_SHADOW );
+					}else{
+						c = skin.getSkinProperties().getColor("color.sidebar.hover.bg");
+					}
+				}else{					
+					if ( isDragging ){
+						c = skin.getSkinProperties().getColor("color.sidebar.drag.bg");
+					}else{
+						c = skin.getSkinProperties().getColor("color.sidebar.hover.bg");
+					}
 				}
+				gc.setBackground(c);
 			}
 
 			if (PAINT_BG) {
 				gc.fillRectangle(drawBounds);
 			}
 
-			if (this == sidebar.draggingOver) {
+			if ( sidebar.getMenuEntry( true ) == this ){
+				
+				Color c;
+				if ( Utils.isDarkAppearanceNativeWindows()){
+					c = Colors.getSystemColor( gc.getDevice(), SWT.COLOR_WIDGET_HIGHLIGHT_SHADOW );
+				}else{
+					c = ColorCache.getSchemedColor(gc.getDevice(), "#166688");
+				}
+				gc.setForeground(c);
+				final int line_width = 1;
+				gc.setLineWidth(line_width);
+				gc.setLineStyle( SWT.LINE_DASH);
+				Rectangle temp = new Rectangle( drawBounds.x, drawBounds.y, drawBounds.width-1, drawBounds.height-1);
+				
+				gc.drawRectangle(temp);
+				
+			}else if ( isDragging ) {
 				Color c = skin.getSkinProperties().getColor("color.sidebar.drag.fg");
 				gc.setForeground(c);
 				final int line_width = 2;

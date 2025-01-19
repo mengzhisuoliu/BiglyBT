@@ -610,8 +610,12 @@ WebEngine
 
 		boolean user_tor = false;
 
-		if ( !explicit_tor ){
+		if ( explicit_tor ){
 
+			can_proxy = true;
+			
+		}else{
+			
 			String test = Result.adjustLink( searchURL );
 
 			if ( test.startsWith( "tor:" )){
@@ -623,8 +627,11 @@ WebEngine
 
 		boolean user_i2p = false;
 
-		if ( !explicit_i2p ){
+		if ( explicit_i2p ){
 
+			can_proxy = true;
+			
+		}else{
 			String test = Result.adjustLink( searchURL );
 
 			if ( test.startsWith( "i2p:" )){
@@ -671,7 +678,7 @@ WebEngine
 
 			if ( plugin_proxy == null ){
 
-				throw( new SearchException( "No Tor plugin proxy available for '" + target_resource + "'" ));
+				throw( new SearchException( "No " + ((explicit_tor || user_tor)?"Tor":"I2P") + " plugin proxy available for '" + target_resource + "'" ));
 			}
 
 			URL 	url		= plugin_proxy.getURL();

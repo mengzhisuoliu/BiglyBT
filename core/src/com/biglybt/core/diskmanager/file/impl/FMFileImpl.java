@@ -30,6 +30,8 @@ import java.io.IOException;
 import java.util.*;
 
 import com.biglybt.core.config.COConfigurationManager;
+import com.biglybt.core.config.ConfigKeys;
+import com.biglybt.core.config.ParameterListener;
 import com.biglybt.core.diskmanager.file.FMFile;
 import com.biglybt.core.diskmanager.file.FMFileManagerException;
 import com.biglybt.core.diskmanager.file.FMFileOwner;
@@ -46,7 +48,7 @@ FMFileImpl
 	protected static final String		READ_ACCESS_MODE	= "r";
 	protected static final String		WRITE_ACCESS_MODE	= "rw"; // "rwd"; - removing this to improve performance
 
-	private static final Map<String,List<Object[]>>			file_map 		= new HashMap<>();
+	private static final Map<StringInterner.FileKey,List<Object[]>>			file_map 		= new HashMap<>();
 	
 	private static final AEMonitor		file_map_mon	= new AEMonitor( "FMFile:map");
 
@@ -68,15 +70,31 @@ FMFileImpl
 			});
 	}
 
+	static volatile boolean	switch_to_upload_only_enable;
+	
+	static{
+		 COConfigurationManager.addAndFireParameterListeners(
+			new String[]{
+				ConfigKeys.File.BCFG_UPLOAD_ONLY_ON_WRITE_ERROR_ENABLE,
+			},
+			new ParameterListener(){
+				@Override
+				public void parameterChanged(String parameterName) {
+										
+	    	    	switch_to_upload_only_enable	= COConfigurationManager.getBooleanParameter( ConfigKeys.File.BCFG_UPLOAD_ONLY_ON_WRITE_ERROR_ENABLE );
+				}
+			});
+	}
+	
 	private final FMFileManagerImpl	manager;
 	private final FMFileOwner		owner;
 	
 	private int					access_mode			= FM_READ;
 
-	private File				linked_file;
-	private long				last_modified;
-	private String				canonical_path;
-	private FileAccessor		fa;
+	private StringInterner.FileKey	linked_file;
+	private long					last_modified;
+	private StringInterner.FileKey	canonical_path;
+	private FileAccessor			fa;
 
 	private FMFileAccessController		file_access;
 
@@ -91,33 +109,37 @@ FMFileImpl
 
 	protected
 	FMFileImpl(
-		FMFileOwner			_owner,
-		FMFileManagerImpl	_manager,
-		File				_file,
-		int					_type,
-		boolean 			_force )
+		FMFileOwner				_owner,
+		FMFileManagerImpl		_manager,
+		StringInterner.FileKey	_file,
+		int						_type,
+		boolean 				_force )
 
 		throws FMFileManagerException
 	{
 		owner			= _owner;
 		manager			= _manager;
 
-		TOTorrentFile tf = owner.getTorrentFile();
-
-		linked_file		= manager.getFileLink( tf.getTorrent(), tf.getIndex(), _file );
+		linked_file		= owner.getFileLink( _file ); //  manager.getFileLink( tf.getTorrent(), tf.getIndex(), _file );
 
 		boolean	file_was_created	= false;
 		boolean	file_reserved		= false;
 		boolean	ok 					= false;
 
-		try{
+		File lf = linked_file.getFile();
 
-			String linked_path = linked_file.getPath();
+		try{			
+			String linked_path = lf.getPath();
 			try {
 
-				canonical_path = linked_file.getCanonicalPath();
-				if(canonical_path.equals(linked_path)) {
-					canonical_path = linked_path;
+				String cp = FileUtil.getCanonicalPath( lf, true );
+				
+				if ( cp.equals(linked_path)){
+					
+					canonical_path = linked_file;
+				}else{
+					
+					canonical_path = new StringInterner.FileKey( cp );
 				}
 
 			}catch( IOException ioe ) {
@@ -126,7 +148,7 @@ FMFileImpl
 
 		        if( msg != null && msg.contains("There are no more files")) {
 
-		          String abs_path = linked_file.getAbsolutePath();
+		          String abs_path = lf.getAbsolutePath();
 
 		          String error = "Caught 'There are no more files' exception during file.getCanonicalPath(). " +
 		                         "os=[" +Constants.OSName+ "], file.getPath()=[" + linked_path + "], file.getAbsolutePath()=[" +abs_path+ "]. ";
@@ -137,7 +159,7 @@ FMFileImpl
 		        throw ioe;
 			}
 
-			createDirs( linked_file );
+			createDirs( lf );
 
 			reserveFile();
 
@@ -151,7 +173,7 @@ FMFileImpl
 
 			if ( file_was_created ){
 
-				linked_file.delete();
+				lf.delete();
 			}
 
 			deleteDirs();
@@ -161,7 +183,7 @@ FMFileImpl
 				throw((FMFileManagerException)e);
 			}
 
-			throw( new FMFileManagerException( "initialisation failed", e ));
+			throw( new FMFileManagerException( FMFileManagerException.OP_OPEN, "initialisation failed", e ));
 
 		}finally{
 
@@ -195,7 +217,7 @@ FMFileImpl
 				throw((FMFileManagerException)e);
 			}
 
-			throw( new FMFileManagerException( "initialisation failed", e ));
+			throw( new FMFileManagerException( FMFileManagerException.OP_OPEN, "initialisation failed", e ));
 		}
 	}
 
@@ -216,9 +238,17 @@ FMFileImpl
 	public boolean
 	exists()
 	{
-		return( linked_file.exists());
+		File lf = linked_file.getFile();
+		
+		return( lf.exists());
 	}
 
+	protected File
+	getFile()
+	{
+		return( linked_file.getFile());
+	}
+	
 	@Override
 	public FMFileOwner
 	getOwner()
@@ -292,13 +322,13 @@ FMFileImpl
 	protected File
 	getLinkedFile()
 	{
-		return( linked_file );
+		return( linked_file.getFile());
 	}
 
 	@Override
 	public void
 	moveFile(
-		File						new_unlinked_file,
+		File						new_linked_file,
 		FileUtil.ProgressListener	pl )
 
 		throws FMFileManagerException
@@ -311,11 +341,11 @@ FMFileImpl
 			
 			length_cache = getLength();
 			
-			TOTorrentFile tf = owner.getTorrentFile();
-
 			String	new_canonical_path;
-
-			File	new_linked_file	= manager.getFileLink( tf.getTorrent(), tf.getIndex(), new_unlinked_file );
+				
+				// 3701 - switched the passed file to always be the actual destination regardless of any links, these are set up separately as required by callers
+				// TOTorrentFile tf = owner.getTorrentFile();
+				// File	new_linked_file	= manager.getFileLink( tf.getTorrent(), tf.getIndex(), new StringInterner.FileKey( new_unlinked_file )).getFile();
 
 			try{
 
@@ -340,12 +370,12 @@ FMFileImpl
 
 			}catch( Throwable e ){
 
-				throw( new FMFileManagerException( "getCanonicalPath fails", e ));
+				throw( new FMFileManagerException( FMFileManagerException.OP_OTHER, "getCanonicalPath fails", e ));
 			}
 
 			if ( new_linked_file.exists()){
 
-				throw( new FMFileManagerException( "moveFile fails - file '" + new_canonical_path + "' already exists"));
+				throw( new FMFileManagerException( FMFileManagerException.OP_OTHER, "moveFile fails - file '" + new_canonical_path + "' already exists"));
 			}
 
 			boolean	was_open	= isOpen();
@@ -354,10 +384,12 @@ FMFileImpl
 
 			createDirs( new_linked_file );
 
-			if ( !linked_file.exists() || FileUtil.renameFile( linked_file, new_linked_file, pl )) {
+			File lf = linked_file.getFile();
+			
+			if ( !lf.exists() || FileUtil.renameFile( lf, new_linked_file, pl )) {
 
-				linked_file		= new_linked_file;
-				canonical_path	= new_canonical_path;
+				linked_file		= new StringInterner.FileKey( new_linked_file );
+				canonical_path	= new StringInterner.FileKey( new_canonical_path );
 
 				reserveFile();
 
@@ -387,7 +419,7 @@ FMFileImpl
 					}
 				}
 
-				throw( new FMFileManagerException( "moveFile fails"));
+				throw( new FMFileManagerException( FMFileManagerException.OP_OTHER, "moveFile fails"));
 			}
 		}finally{
 
@@ -404,6 +436,8 @@ FMFileImpl
 
 		throws FMFileManagerException
 	{
+		File lf = linked_file.getFile();
+		
 		try{
 			this_mon.enter();
 
@@ -411,7 +445,7 @@ FMFileImpl
 			
 			String	new_canonical_path;
 
-			File 	new_linked_file = FileUtil.newFile( linked_file.getParentFile(), new_name );
+			File 	new_linked_file = FileUtil.newFile( lf.getParentFile(), new_name );
 
 			try{
 
@@ -436,22 +470,22 @@ FMFileImpl
 
 			}catch( Throwable e ){
 
-				throw( new FMFileManagerException( "getCanonicalPath fails", e ));
+				throw( new FMFileManagerException( FMFileManagerException.OP_OTHER, "getCanonicalPath fails", e ));
 			}
 
 			if ( new_linked_file.exists()){
 
-				throw( new FMFileManagerException( "renameFile fails - file '" + new_canonical_path + "' already exists"));
+				throw( new FMFileManagerException( FMFileManagerException.OP_OTHER, "renameFile fails - file '" + new_canonical_path + "' already exists"));
 			}
 
 			boolean	was_open	= isOpen();
 
 			close();	// full close, this will release any slots in the limited file case
 
-			if ( !linked_file.exists() || linked_file.renameTo( new_linked_file )){
+			if ( !lf.exists() || lf.renameTo( new_linked_file )){
 
-				linked_file		= new_linked_file;
-				canonical_path	= new_canonical_path;
+				linked_file		= new StringInterner.FileKey( new_linked_file );
+				canonical_path	= new StringInterner.FileKey( new_canonical_path );
 
 				reserveFile();
 
@@ -481,7 +515,7 @@ FMFileImpl
 					}
 				}
 
-				throw( new FMFileManagerException( "renameFile fails"));
+				throw( new FMFileManagerException( FMFileManagerException.OP_OTHER, "renameFile fails"));
 			}
 		}finally{
 
@@ -569,6 +603,34 @@ FMFileImpl
 		}
 	}
 
+	private void
+	getFileAccessor()
+		throws FileNotFoundException
+	{
+		File lf = linked_file.getFile();
+		
+		try{
+		
+			fa = FileUtil.newFileAccessor( lf, access_mode==FM_READ?READ_ACCESS_MODE:WRITE_ACCESS_MODE);
+			
+		}catch( FileNotFoundException e ){
+			
+				// relax to read-only if we are trying to handle switching to upload only on write errors
+			
+			if ( 	switch_to_upload_only_enable && 
+					access_mode == FM_WRITE && 
+					lf.exists()  && 
+					lf.canRead()){
+				
+				fa = FileUtil.newFileAccessor( lf, READ_ACCESS_MODE );
+				
+			}else{
+				
+				throw( e );
+			}
+		}
+	}
+	
 	protected void
 	reopen(
 		FMFileManagerException		cause )
@@ -597,7 +659,7 @@ FMFileImpl
 
 		file_access.aboutToOpen();
 
-		fa = FileUtil.newFileAccessor( linked_file, access_mode==FM_READ?READ_ACCESS_MODE:WRITE_ACCESS_MODE);
+		getFileAccessor();
 
 		last_modified = 0;
 		
@@ -612,7 +674,7 @@ FMFileImpl
 	{
 		if ( fa != null ){
 
-			throw( new FMFileManagerException( "file already open" ));
+			throw( new FMFileManagerException( FMFileManagerException.OP_OPEN, "file already open" ));
 		}
 
 		reserveAccess( reason );
@@ -620,7 +682,7 @@ FMFileImpl
 		try{
 			file_access.aboutToOpen();
 
-			fa = FileUtil.newFileAccessor( linked_file, access_mode==FM_READ?READ_ACCESS_MODE:WRITE_ACCESS_MODE);
+			getFileAccessor();
 
 			last_modified = 0;
 			
@@ -634,11 +696,13 @@ FMFileImpl
 				// yet allocated - attempt to create the file on demand
 
 			try{
-				linked_file.getParentFile().mkdirs();
+				File lf = linked_file.getFile();
+				
+				lf.getParentFile().mkdirs();
 
-				linked_file.createNewFile();
+				lf.createNewFile();
 
-				fa = FileUtil.newFileAccessor( linked_file, access_mode==FM_READ?READ_ACCESS_MODE:WRITE_ACCESS_MODE);
+				getFileAccessor();
 
 				last_modified = 0;
 				
@@ -653,13 +717,13 @@ FMFileImpl
 
 				Debug.printStackTrace( e );
 
-				throw( new FMFileManagerException( "open fails for '" + linked_file.getAbsolutePath() + "'", e ));
+				throw( new FMFileManagerException( access_mode==FM_READ?FMFileManagerException.OP_READ:FMFileManagerException.OP_WRITE, "open fails for '" + linked_file.getFile().getAbsolutePath() + "'", e ));
 			}
 		}catch( Throwable e ){
 
 			Debug.printStackTrace( e );
 
-			throw( new FMFileManagerException( "open fails for '" + linked_file.getAbsolutePath() + "'", e ));
+			throw( new FMFileManagerException( access_mode==FM_READ?FMFileManagerException.OP_READ:FMFileManagerException.OP_WRITE, "open fails for '" + linked_file.getFile().getAbsolutePath() + "'", e ));
 		}
 	}
 
@@ -696,7 +760,7 @@ FMFileImpl
 
 			}catch( Throwable e ){
 
-				throw( new FMFileManagerException("close fails", e ));
+				throw( new FMFileManagerException( FMFileManagerException.OP_CLOSE, "close fails", e ));
 
 			}finally{
 
@@ -751,11 +815,13 @@ FMFileImpl
 	{
 		close();
 
-		if ( linked_file.exists()){
+		File lf = linked_file.getFile();
 
-			if ( !linked_file.delete()){
+		if ( lf.exists()){
 
-				throw( new FMFileManagerException( "Failed to delete '" + linked_file + "'" ));
+			if ( !lf.delete()){
+
+				throw( new FMFileManagerException( FMFileManagerException.OP_OTHER, "Failed to delete '" + linked_file + "'" ));
 			}
 		}
 	}
@@ -850,14 +916,14 @@ FMFileImpl
 	getLastModified()
 	{
 		if (last_modified == 0) {
-			last_modified = linked_file.lastModified();
+			last_modified = linked_file.getFile().lastModified();
 		}
 		return( last_modified );
 	}
 	
 
 		// file reservation is used to manage the possibility of multiple torrents
-		// refering to the same file. Initially introduced to stop a common problem
+		// referring to the same file. Initially introduced to stop a common problem
 		// whereby different torrents contain the same files - without
 		// this code the torrents could interfere resulting in all sorts of problems
 		// The original behavior was to completely prevent the sharing of files.
@@ -909,7 +975,7 @@ FMFileImpl
 							
 							if ( this_torrent == my_torrent && this_tf != my_torrent_file ){
 								
-								throw( new FMFileManagerException(  "File '"+canonical_path + "' occurs more than once in download.\nRename one of the files in Files view via the right-click menu." ));
+								throw( new FMFileManagerException(  FMFileManagerException.OP_OTHER, "File '"+canonical_path + "' occurs more than once in download.\nRename one of the files in Files view via the right-click menu." ));
 							}
 						}
 					}
@@ -961,9 +1027,11 @@ FMFileImpl
 
 			if ( owners == null ){
 
-				Debug.out( "reserveAccess fail" );
+				String str = "File '"+canonical_path+"' has not been reserved (no entries), '" + owner.getName()+"'";
+						
+				Debug.out( "reserveAccess fail: " + str );
 
-				throw( new FMFileManagerException( "File '"+canonical_path+"' has not been reserved (no entries), '" + owner.getName()+"'"));
+				throw( new FMFileManagerException( FMFileManagerException.OP_OTHER, str ));
 			}
 
 			for ( Object[] entry: owners ){
@@ -980,9 +1048,11 @@ FMFileImpl
 
 			if ( my_entry == null ){
 
-				Debug.out( "reserveAccess fail" );
+				String str = "File '"+canonical_path+"' has not been reserved (not found), '" + owner.getName()+"'";
+				
+				Debug.out( "reserveAccess fail: " + str );
 
-				throw( new FMFileManagerException( "File '"+canonical_path+"' has not been reserved (not found), '" + owner.getName()+"'"));
+				throw( new FMFileManagerException( FMFileManagerException.OP_OTHER, str ));
 			}
 
 			my_entry[1] = Boolean.valueOf(access_mode == FM_WRITE);
@@ -1089,10 +1159,11 @@ FMFileImpl
 					}
 				}
 				
-
-				Debug.out( "reserveAccess fail" );
+				String str = "File '"+canonical_path+"' is in use by '" + (users_sb==null?"eh?":users_sb.toString()) +"'";
 				
-				throw( new FMFileManagerException( "File '"+canonical_path+"' is in use by '" + (users_sb==null?"eh?":users_sb.toString()) +"'"));
+				Debug.out( "reserveAccess fail: " + str );
+				
+				throw( new FMFileManagerException( FMFileManagerException.OP_OTHER, str ));
 			}
 
 		}finally{
@@ -1156,7 +1227,7 @@ FMFileImpl
 
 		File	parent = target.getParentFile();
 
-		if ( !parent.exists()){
+		if ( !FileUtil.existsWithCache( parent )){
 
 			List<File>	new_dirs = new ArrayList<>();
 
@@ -1200,7 +1271,7 @@ FMFileImpl
 
 				}else{
 
-					FMFileManagerException error = new FMFileManagerException( MessageText.getString( "DownloadManager.error.datamissing" ) + ": " + target.getAbsolutePath());
+					FMFileManagerException error = new FMFileManagerException( FMFileManagerException.OP_OTHER, MessageText.getString( "DownloadManager.error.datamissing" ) + ": " + target.getAbsolutePath());
 					
 					error.setType(FMFileManagerException.ET_FILE_OR_DIR_MISSING );
 					
@@ -1259,15 +1330,27 @@ FMFileImpl
 	protected String
 	getString()
 	{
-		File cPath = FileUtil.newFile(canonical_path);
+		String cp = canonical_path.toString();
+		
+		File cPath = canonical_path.getFile();
 		String sPaths;
-		if (cPath.equals(linked_file))
-			sPaths = "can/link=" + Debug.secretFileName(canonical_path);
-		else
-			sPaths = "can=" + Debug.secretFileName(canonical_path) + ",link="
+		
+		FileAccessor current_fa = fa;
+		
+		String fa_str = current_fa==null?"null":current_fa.getString();
+		
+		if (cPath.equals(linked_file)){
+			
+			sPaths = "can/link=" + Debug.secretFileName(cp);
+			
+		}else{
+			
+			sPaths = "can=" + Debug.secretFileName(cp) + ",link="
 					+ Debug.secretFileName(linked_file.toString());
-		return sPaths + ",fa=" + fa + ",acc=" + access_mode + ",ctrl = "
-				+ file_access.getString();
+		}
+		
+		return sPaths + ",fa=" + fa_str + ",acc=" + access_mode + ",ctrl={"
+				+ file_access.getString()+ "}";
 	}
 
 	protected static void
@@ -1282,11 +1365,11 @@ FMFileImpl
 			try{
 				file_map_mon.enter();
 
-				Iterator<String>	it = file_map.keySet().iterator();
+				Iterator<StringInterner.FileKey>	it = file_map.keySet().iterator();
 
 				while( it.hasNext()){
 
-					String	key = (String)it.next();
+					StringInterner.FileKey	key = it.next();
 
 					List<Object[]>	owners = file_map.get(key);
 
@@ -1307,7 +1390,7 @@ FMFileImpl
 					}
 
 
-					writer.println( Debug.secretFileName(key) + " -> " + str );
+					writer.println( Debug.secretFileName(key.toString()) + " -> " + str );
 				}
 			}finally{
 

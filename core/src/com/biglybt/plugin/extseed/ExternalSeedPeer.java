@@ -22,6 +22,7 @@ package com.biglybt.plugin.extseed;
 import java.net.URL;
 import java.util.*;
 
+import com.biglybt.core.peermanager.peerdb.PeerItemFactory;
 import com.biglybt.core.util.CopyOnWriteList;
 import com.biglybt.core.util.Debug;
 import com.biglybt.pif.download.Download;
@@ -334,7 +335,7 @@ ExternalSeedPeer
 
 				if ( peer_added ){
 
-					plugin.log( reader.getName() + " failed - " + reader.getStatus() + ", permanent = " + reader.isPermanentlyUnavailable());
+					plugin.log( download.getName() + ": " + reader.getName() + " failed - " + reader.getStatus() + ", permanent = " + reader.isPermanentlyUnavailable());
 
 					peer_added	= false;
 
@@ -957,6 +958,13 @@ ExternalSeedPeer
 		return( reader.getName());
 	}
 
+	@Override
+	public PeerDescriptor 
+	getDescriptor()
+	{
+		return( PeerItemFactory.getDescriptor( this ));
+	}
+	
 	@Override
 	public void
 	setUserData(

@@ -24,6 +24,7 @@ import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.List;
+import java.util.function.Consumer;
 
 import com.biglybt.ui.swt.mainwindow.*;
 import org.eclipse.swt.SWT;
@@ -66,6 +67,7 @@ import com.biglybt.ui.common.table.TableRowCore;
 import com.biglybt.ui.common.table.TableStructureEventDispatcher;
 import com.biglybt.ui.common.util.MenuItemManager;
 import com.biglybt.ui.mdi.MultipleDocumentInterface;
+import com.biglybt.ui.swt.components.shell.ShellFactory;
 import com.biglybt.ui.swt.exporttorrent.wizard.ExportTorrentWizard;
 import com.biglybt.ui.swt.imageloader.ImageLoader;
 import com.biglybt.ui.swt.minibar.DownloadBar;
@@ -73,6 +75,7 @@ import com.biglybt.ui.swt.pif.UISWTGraphic;
 import com.biglybt.ui.swt.sharing.ShareUtils;
 import com.biglybt.ui.swt.views.FilesViewMenuUtil;
 import com.biglybt.ui.swt.views.columnsetup.TableColumnSetupWindow;
+import com.biglybt.ui.swt.views.table.TableRowViewer;
 import com.biglybt.ui.swt.views.table.TableSelectedRowsListener;
 import com.biglybt.ui.swt.views.table.TableViewSWT;
 import com.biglybt.ui.common.table.impl.TableContextMenuManager;
@@ -426,6 +429,8 @@ public class TorrentMenuFancy
 			}
 		};
 
+		shell.setData( ShellFactory.NOT_A_GOOD_PARENT, "" );
+		
 		//FormLayout shellLayout = new FormLayout();
 		RowLayout shellLayout = new RowLayout(SWT.VERTICAL);
 		shellLayout.fill = true;
@@ -824,13 +829,11 @@ public class TorrentMenuFancy
 			}
 			stop = stop || ManagerUtils.isStopable(dm);
 
-			start = start || ManagerUtils.isStartable(dm);
+			start = start || ManagerUtils.isStartable(dm,true);
 
 			pause = pause || ManagerUtils.isPauseable( dm );
 			
-			recheck = recheck || dm.canForceRecheck();
-
-			boolean stopped = ManagerUtils.isStopped(dm);
+			recheck = recheck || ManagerUtils.canForceRecheck( dm );
 
 			int state = dm.getState();
 			bChangeDir &= (state == DownloadManager.STATE_ERROR
@@ -845,7 +848,7 @@ public class TorrentMenuFancy
 				bChangeDir = dm.isDataAlreadyAllocated();
 				if (bChangeDir && state == DownloadManager.STATE_ERROR) {
 					// filesExist is way too slow!
-					bChangeDir = !dm.filesExist(true);
+					bChangeDir = !dm.filesExist(true,true);
 				} else {
 					DiskManagerFileInfo[] files = dm.getDiskManagerFileInfoSet().getFiles();
 					bChangeDir = false;
@@ -853,7 +856,7 @@ public class TorrentMenuFancy
 						if (info.isSkipped()) {
 							continue;
 						}
-						bChangeDir = !info.getFile(true).exists();
+						bChangeDir = !Utils.fileExistsWithTimeout( info.getFile(true));
 						break;
 					}
 				}
@@ -887,7 +890,7 @@ public class TorrentMenuFancy
 				DownloadManager dm = dms[i];
 
 				forceStartEnabled = forceStartEnabled
-						|| ManagerUtils.isForceStartable(dm);
+						|| ManagerUtils.isForceStartable(dm, true );
 
 				forceStart = forceStart || dm.isForceStart();
 			}
@@ -899,7 +902,7 @@ public class TorrentMenuFancy
 					new ListenerDMTask(dms) {
 						@Override
 						public void run(DownloadManager dm) {
-							if (ManagerUtils.isForceStartable(dm)) {
+							if (ManagerUtils.isForceStartable(dm, true )) {
 								dm.setForceStart(newForceStart);
 							}
 						}
@@ -922,8 +925,8 @@ public class TorrentMenuFancy
 				"recheck", recheck, new ListenerDMTask(dms) {
 					@Override
 					public void run(DownloadManager dm) {
-						if (dm.canForceRecheck()) {
-							dm.forceRecheck();
+						if (ManagerUtils.canForceRecheck( dm )) {
+							ManagerUtils.forceRecheck( dm );
 						}
 					}
 				});
@@ -1304,8 +1307,9 @@ public class TorrentMenuFancy
 									allResumeIncomplete = false;
 								}
 								if ( stopped && !hasClearableLinks ){
-									if ( dm.getDiskManagerFileInfoSet().nbFiles() > 1 ){
-										if ( dms.getFileLinks().hasLinks()){
+									TOTorrent torrent = dm.getTorrent();
+									if ( torrent != null && !torrent.isSimpleTorrent()){
+										if ( dms.getFileLinks().size() > 0){
 											hasClearableLinks = true;
 										}
 									}
@@ -1318,7 +1322,7 @@ public class TorrentMenuFancy
 								
 								lrrecheck = lrrecheck || ManagerUtils.canLowResourceRecheck(dm);
 																
-								allAllocatable &= stopped && !dm.isDataAlreadyAllocated() && !dm.isDownloadComplete( false );	
+								allAllocatable &= ManagerUtils.canAllocate( dm );
 								
 								Boolean dmmask = dms.getOptionalBooleanAttribute( DownloadManagerState.AT_MASK_DL_COMP_OPTIONAL );
 								
@@ -1396,11 +1400,13 @@ public class TorrentMenuFancy
 								public void run(DownloadManager dm)
 								{
 									if ( 	ManagerUtils.isStopped(dm) &&
-											dm.getDownloadState().getFileLinks().hasLinks()){
+											dm.getDownloadState().getFileLinks().size() > 0){
 
 										DiskManagerFileInfoSet fis = dm.getDiskManagerFileInfoSet();
 
-										if ( fis.nbFiles() > 1 ){
+										TOTorrent torrent = dm.getTorrent();
+										
+										if ( torrent != null && !torrent.isSimpleTorrent()){
 
 											DiskManagerFileInfo[] files = fis.getFiles();
 
@@ -1429,13 +1435,9 @@ public class TorrentMenuFancy
 							itemFileAlloc.addListener(SWT.Selection, new ListenerDMTask(
 									dms) {
 								@Override
-								public void run(DownloadManager dm) {
+								public void run(DownloadManager[] dms) {
 									
-									dm.getDownloadState().setLongAttribute( DownloadManagerState.AT_FILE_ALLOC_STRATEGY, DownloadManagerState.FAS_ZERO_NEW_STOP );
-									
-									dm.getDownloadState().setFlag( DownloadManagerState.FLAG_DISABLE_STOP_AFTER_ALLOC, false );
-									
-									ManagerUtils.queue( dm, null );
+									ManagerUtils.allocate( dms );
 								}
 							});
 	
@@ -1505,7 +1507,7 @@ public class TorrentMenuFancy
 								
 									for ( DownloadManagerState.ResumeHistory h: history ){
 										MenuItem itemHistory = new MenuItem(restore_menu, SWT.PUSH);
-										itemHistory.setText( new SimpleDateFormat().format( new Date(h.getDate())));
+										itemHistory.setText( DisplayFormatters.formatDateYMDHM(h.getDate()));
 										
 										itemHistory.addListener(SWT.Selection,(ev)->{
 											dmState.restoreResumeData( h );;
@@ -1534,6 +1536,42 @@ public class TorrentMenuFancy
 							
 							itemMaskDLComp.setEnabled( dms.length > 0 );
 
+								// set file priority when pieces remaining
+							
+							MenuItem itemSetFilePriority = new MenuItem(menu, SWT.PUSH);
+									
+							String sfp_text = MessageText.getString( "ConfigView.label.set.file.pri.pieces.rem" );
+							
+							int sfp_def;
+							
+							if ( dms.length == 1 ){
+								
+								sfp_def = dms[0].getDownloadState().getIntAttribute( DownloadManagerState.AT_SET_FILE_PRIORITY_REM_PIECE );
+								
+								if ( sfp_def > 0 ){
+									
+									sfp_text += " (" + sfp_def + ")";
+								}
+							}else{
+								
+								sfp_def = -1;
+							}
+							
+							itemSetFilePriority.setText(sfp_text+"...");
+							
+							itemSetFilePriority.addListener(SWT.Selection, new ListenerDMTask(dms) {
+								@Override
+								public void run(DownloadManager[] dms) {
+									Utils.numberPrompt( "enter.number", "number.of.pieces", sfp_def>0?sfp_def:null, (num)->{
+										for ( DownloadManager dm: dms ){
+											dm.getDownloadState().setIntAttribute(DownloadManagerState.AT_SET_FILE_PRIORITY_REM_PIECE, num);
+										}
+									});
+								}
+							});
+
+							itemSetFilePriority.setEnabled( dms.length > 0 );					
+							
 							if (userMode > 1 && isSeedingView) {
 
 								boolean canSetSuperSeed = false;
@@ -1598,6 +1636,22 @@ public class TorrentMenuFancy
 								}
 							}
 
+							if ( userMode > 1 ){
+									
+									// view debug
+									
+								MenuItem itemViewDebug = new MenuItem(menu, SWT.PUSH);
+								itemViewDebug.setText( MessageText.getString("StartStopRules.menu.viewDebug") + "..." );
+								itemViewDebug.addListener(SWT.Selection, new ListenerDMTask(dms) {
+									@Override
+									public void 
+									run(
+										DownloadManager[] dms)
+									{
+										ManagerUtils.viewDebug( dms );
+									}
+								});
+							}
 						}
 					});
 		}
@@ -1979,6 +2033,7 @@ public class TorrentMenuFancy
 				new FancyMenuRowInfoListener() {
 					@Override
 					public void buildMenu(Menu menu) {
+						Utils.disposeSWTObjects(menu.getItems());
 						TagUIUtils.addLibraryViewTagsSubMenu(dms, menu);
 					}
 				});
@@ -2048,6 +2103,20 @@ public class TorrentMenuFancy
 			});
 		}
 
+			// row details
+		
+		createRow(detailArea, "MyTorrentsView.menu.row.details", null, new Listener() {
+			@Override
+			public void handleEvent(Event event) {
+				TableRowCore focusedRow = tv.getFocusedRow();
+				if (focusedRow == null || focusedRow.isRowDisposed()) {
+					focusedRow = tv.getRow(0);
+				}
+				String tableID = tv.getTableID();
+				new TableRowViewer(tv.getDataSourceType(), tableID,  focusedRow );
+			}
+		});
+		
 		createRow(detailArea, "MyTorrentsView.menu.editTableColumns", "columns", new Listener() {
 			@Override
 			public void handleEvent(Event event) {
@@ -2057,7 +2126,7 @@ public class TorrentMenuFancy
 				}
 				String tableID = tv.getTableID();
 				new TableColumnSetupWindow(tv.getDataSourceType(), tableID, column, focusedRow,
-						TableStructureEventDispatcher.getInstance(tableID)).open();
+						TableStructureEventDispatcher.getInstance(tableID), false );
 			}
 		});
 	}
@@ -2156,7 +2225,7 @@ public class TorrentMenuFancy
 
 				File file = dm.getSaveLocation();
 
-				if ( !file.exists()){
+				if ( !Utils.fileExistsWithTimeout( file )){
 					
 					can_share_pers = false;
 					
@@ -2381,6 +2450,22 @@ public class TorrentMenuFancy
 					});
 		}
 
+		if (hasSelection && MenuBuildUtils.hasOpenWithMenu( dms, false )) {
+			createMenuRow(
+				detailArea,
+				"menu.open.with", null,
+				new FancyMenuRowInfoListener()
+				{
+					@Override
+					public void
+					buildMenu(
+						Menu menuOpenWith )
+					{
+						MenuBuildUtils.addOpenWithMenu( menuOpenWith, true, dms, false );
+					}
+				});
+		}
+		
 		// Explore (or open containing folder)
 		if (hasSelection) {
 			final boolean use_open_containing_folder = COConfigurationManager.getBooleanParameter("MyTorrentsView.menu.show_parent_folder_enabled");
@@ -2520,7 +2605,6 @@ public class TorrentMenuFancy
 				});
 
 		boolean fileMove 		= true;
-		boolean locateFiles 	= false;
 		boolean	exportFiles		= true;
 		boolean	canSetMOC		= dms.length > 0;
 		boolean canClearMOC		= false;
@@ -2532,14 +2616,6 @@ public class TorrentMenuFancy
 			}
 			if ( !dm.canExportDownload()){
 				exportFiles = false;
-			}
-			int state = dm.getState();
-			
-			if ( 	!dm.isDownloadComplete( false ) ||  
-					state == DownloadManager.STATE_ERROR || 
-					state == DownloadManager.STATE_STOPPED ){
-				
-				locateFiles = true;
 			}
 			
 			boolean incomplete = !dm.isDownloadComplete(true);
@@ -2590,6 +2666,23 @@ public class TorrentMenuFancy
 						buildMenu(
 							Menu moc_menu )
 						{
+								// existing
+							
+							String existing_moc = TorrentUtil.getMOC( dms );
+							
+							if ( existing_moc != null ){
+								
+								MenuItem existing_item = new MenuItem( moc_menu, SWT.PUSH );
+								
+								existing_item.setText( "[" + existing_moc + "]" );
+								
+								existing_item.setEnabled( false );
+								
+								new MenuItem( moc_menu, SWT.SEPARATOR );
+							}
+							
+								// clear
+							
 							MenuItem clear_item = new MenuItem( moc_menu, SWT.PUSH);
 
 							Messages.setLanguageText( clear_item, "Button.clear" );
@@ -2603,6 +2696,15 @@ public class TorrentMenuFancy
 
 							clear_item.setEnabled( f_canClearMOC );
 							
+								// set
+							
+							Consumer<String> moc_setter = (path)->{
+								
+								MenuBuildUtils.addToMOCHistory( path );
+								
+								TorrentUtil.setMOC( dms, path );
+							};
+							
 							MenuItem set_item = new MenuItem( moc_menu, SWT.PUSH);
 
 							Messages.setLanguageText( set_item, "label.set" );
@@ -2610,11 +2712,16 @@ public class TorrentMenuFancy
 							set_item.addListener(SWT.Selection, new ListenerDMTask(dms) {
 								@Override
 								public void run(DownloadManager[] dms) {
-									TorrentUtil.setMOC(parentShell, dms);
+									TorrentUtil.selectMOC(parentShell, dms, moc_setter );
 								}
 							});
 							
 							set_item.setEnabled( f_canSetMOC );
+							
+							if ( f_canSetMOC ){
+								
+								MenuBuildUtils.addMOCHistory( moc_menu, moc_setter );
+							}
 						}
 					});
 		}
@@ -2632,19 +2739,17 @@ public class TorrentMenuFancy
 				new ListenerDMTask(dms) {
 					@Override
 					public void run(DownloadManager dm) {
-						dm.filesExist(true);
+						dm.filesExist(true,false);
 					}
 				});
 
-		if ( locateFiles ){
-			createRow(detailArea, "MyTorrentsView.menu.locatefiles", null,
-					new ListenerDMTask(dms) {
-						@Override
-						public void run(DownloadManager[] dms) {
-							ManagerUtils.locateFiles(dms,parentShell);
-						}
-					});
-		}
+		createRow(detailArea, "MyTorrentsView.menu.locatefiles", null,
+				new ListenerDMTask(dms) {
+					@Override
+					public void run(DownloadManager[] dms) {
+						ManagerUtils.locateFiles(dms,parentShell);
+					}
+				});
 
 		if ( dms.length == 1 && ManagerUtils.canFindMoreLikeThis()){
 			createRow(detailArea, "MyTorrentsView.menu.findmorelikethis", null,

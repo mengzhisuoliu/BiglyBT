@@ -146,13 +146,15 @@ DiskManagerImpl
 	
 	static boolean	skip_incomp_dl_file_checks;
 	static boolean	skip_comp_dl_file_checks;
-
+	static boolean	switch_to_upload_only_enable;
+	
 	static{
 		 COConfigurationManager.addAndFireParameterListeners(
 			new String[]{
 				ConfigKeys.File.BCFG_MISSING_FILE_DOWNLOAD_RESTART,
 				ConfigKeys.File.BCFG_SKIP_COMP_DL_FILE_CHECKS,
 				ConfigKeys.File.BCFG_SKIP_INCOMP_DL_FILE_CHECKS,
+				ConfigKeys.File.BCFG_UPLOAD_ONLY_ON_WRITE_ERROR_ENABLE,
 			},
 			new ParameterListener(){
 				@Override
@@ -161,6 +163,7 @@ DiskManagerImpl
 					missing_file_dl_restart_enabled = COConfigurationManager.getBooleanParameter( ConfigKeys.File.BCFG_MISSING_FILE_DOWNLOAD_RESTART );
 	    	    	skip_comp_dl_file_checks		= COConfigurationManager.getBooleanParameter( ConfigKeys.File.BCFG_SKIP_COMP_DL_FILE_CHECKS );
 	    	    	skip_incomp_dl_file_checks		= COConfigurationManager.getBooleanParameter( ConfigKeys.File.BCFG_SKIP_INCOMP_DL_FILE_CHECKS );
+	    	    	switch_to_upload_only_enable	= COConfigurationManager.getBooleanParameter( ConfigKeys.File.BCFG_UPLOAD_ONLY_ON_WRITE_ERROR_ENABLE );
 				}
 			});
 	}
@@ -306,6 +309,8 @@ DiskManagerImpl
     private final Object   file_piece_lock  = new Object();
 
     private final BitFlags	availability;
+    
+    private volatile boolean switched_to_upload_only;
     
     public
     DiskManagerImpl(
@@ -516,13 +521,32 @@ DiskManagerImpl
         	 */
         	File[] move_to_dirs = DownloadManagerMoveHandler.getRelatedDirs(download_manager);
 
-        	for (int i=0; i<move_to_dirs.length; i++) {
-        		File move_to_dir = move_to_dirs[i].getAbsoluteFile();
-        		if (filesExist (move_to_dir,true)) {
-                    alreadyMoved = files_exist = true;
-                    download_manager.setTorrentSaveDir(move_to_dir, false);
-                    break;
-                }
+        	if ( move_to_dirs.length > 0 ){
+        		
+        		files_exist = this.filesExist();
+        		
+        		if ( files_exist ){
+        			
+        			alreadyMoved = download_manager.getDownloadState().getFlag( DownloadManagerState.FLAG_MOVE_ON_COMPLETION_DONE );
+        			
+        		}else{
+        			
+		        	for (int i=0; i<move_to_dirs.length; i++) {
+		        		
+		        		File move_to_dir = move_to_dirs[i].getAbsoluteFile();
+		        		
+		        		if ( filesExist( move_to_dir, true )){
+		        			
+		       				FileUtil.log( "Missing files for '" + download_manager.getDisplayName() +"' found in related '" + move_to_dir + "'" );
+
+		                    alreadyMoved = files_exist = true;
+		                    
+		                    download_manager.setTorrentSaveDir(move_to_dir, false);
+		                    
+		                    break;
+		                }
+		        	}
+        		}
         	}
         }
 
@@ -535,17 +559,23 @@ DiskManagerImpl
         // If we haven't yet allocated the files, take this chance to determine
         // whether any relative paths should be taken into account for default
         // save path calculations.
+        
         if (!alreadyMoved && !download_manager.isDataAlreadyAllocated()) {
 
-        	// Check the files don't already exist in their current location.
-        	if (!files_exist) {files_exist = this.filesExist();}
+        		// Check the files don't already exist in their current location.
+        	
+        	if (!files_exist){
+        		
+        		files_exist = this.filesExist();
+        	}
+        	
         	if (!files_exist) {
-        		SaveLocationChange transfer =
-        			DownloadManagerMoveHandler.onInitialisation(download_manager);
+        		SaveLocationChange transfer = DownloadManagerMoveHandler.onInitialisation(download_manager);
         		if (transfer != null) {
         			if (transfer.download_location != null || transfer.download_name != null) {
         				File dl_location = transfer.download_location;
         				if (dl_location == null) {dl_location = download_manager.getAbsoluteSaveLocation().getParentFile();}
+        				FileUtil.log( "Updating data location for '" + download_manager.getDisplayName() +"' to '" + dl_location + "' on init" );
         				if (transfer.download_name == null) {
         					download_manager.setTorrentSaveDir(dl_location, false);
         				}
@@ -554,6 +584,7 @@ DiskManagerImpl
         				}
         			}
         			if (transfer.torrent_location != null || transfer.torrent_name != null) {
+        				FileUtil.log( "Updating torrent location for '" + download_manager.getDisplayName() +"' to '" + transfer.torrent_location + "' on init");
         				try {download_manager.setTorrentFile(transfer.torrent_location, transfer.torrent_name);}
         				catch (DownloadManagerException e) {Debug.printStackTrace(e);}
         			}
@@ -708,23 +739,35 @@ DiskManagerImpl
                     }
                 }catch ( Throwable e ){
 
-                    setFailed( DiskManager.ET_OTHER, "File close fails", e );
+                    setFailed( DiskManager.ET_OTHER, "File close fails", e, switched_to_upload_only );
                 }
             }
         }
 
-        if ( getState() == DiskManager.READY || ( getState() == DiskManager.FAULTY && errorType == ET_STOP_DURING_INIT )){
-
-            try{
-
-                saveResumeData( false );
-
-            }catch( Exception e ){
-
-                setFailed( DiskManager.ET_OTHER, "Resume data save fails", e );
-            }
+        DownloadManagerState state = download_manager.getDownloadState();
+        
+        try{
+        		// saving resume data might well save the state, however we're going to
+        		// save the state below anyway 
+        	
+        	state.suppressStateSave( true );
+        
+	        if ( getState() == DiskManager.READY || ( getState() == DiskManager.FAULTY && errorType == ET_STOP_DURING_INIT )){
+	
+	            try{
+	
+	                saveResumeData( false );
+	
+	            }catch( Exception e ){
+	
+	                setFailed( DiskManager.ET_OTHER, "Resume data save fails", e, switched_to_upload_only );
+	            }
+	        }
+        }finally{
+        	
+        	state.suppressStateSave( false );
         }
-
+        
         saveState( false );
 
         // can't be used after a stop so we might as well clear down the listeners
@@ -782,7 +825,7 @@ DiskManagerImpl
 
             DMPieceMapperFile pm_info = pm_files[i];
 
-            String relative_file = pm_info.getRelativeDataPath();
+            StringInterner.FileKey relative_file = pm_info.getRelativeDataPath();
 
             long target_length = pm_info.getLength();
 
@@ -904,7 +947,7 @@ DiskManagerImpl
     	DMPieceMapperFile			pm_info,
     	int							file_index,
     	File						root_dir,
-    	String					relative_file,
+    	StringInterner.FileKey		relative_file,
     	int							storage_type )
 
     	throws CacheFileManagerException
@@ -929,9 +972,9 @@ DiskManagerImpl
 
         	if ( Debug.getNestedExceptionMessage(e).contains( "volume label syntax is incorrect" )){
 
-						File target_file = FileUtil.newFile( root_dir, relative_file);
+				File target_file = FileUtil.newFile( root_dir, relative_file.toString());
 
-        		File actual_file = state.getFileLink( file_index, target_file );
+        		File actual_file = state.getFileLink( file_index );
 
         		if ( actual_file == null ){
 
@@ -988,7 +1031,7 @@ DiskManagerImpl
 
         				if ( comps.isEmpty()){
 
-        					String prefix = Base32.encode( new SHA1Simple().calculateHash( relative_file.getBytes( Constants.UTF_8 ))).substring( 0, 4 );
+        					String prefix = Base32.encode( new SHA1Simple().calculateHash( relative_file.toString().getBytes( Constants.UTF_8 ))).substring( 0, 4 );
 
         					comp = prefix + "_" + comp;
         				}
@@ -1079,9 +1122,9 @@ DiskManagerImpl
 
 				DMPieceMapperFile pm_info = pm_files[i];
 
-				String relative_data_file = pm_info.getRelativeDataPath();
+				StringInterner.FileKey relative_data_file = pm_info.getRelativeDataPath();
 
-				allocation_task = relative_data_file;
+				allocation_task = relative_data_file.toString();
 
 				DiskManagerFileInfoImpl fileInfo;
 
@@ -1130,9 +1173,9 @@ DiskManagerImpl
 
                 final long target_length = pm_info.getLength();
 
-                String relative_data_file = pm_info.getRelativeDataPath();
+                StringInterner.FileKey relative_data_file = pm_info.getRelativeDataPath();
 
-                allocation_task = relative_data_file;
+                allocation_task = relative_data_file.toString();
 
                 DiskManagerFileInfoImpl fileInfo = allocated_files[i];
 
@@ -1171,7 +1214,9 @@ DiskManagerImpl
                 
                 String      ext  = data_file.getName();
 
-                if ( incomplete_suffix != null && ext.endsWith( incomplete_suffix )){
+                boolean has_incomp_suffix = incomplete_suffix != null && ext.endsWith( incomplete_suffix );
+                
+                if ( has_incomp_suffix ){
 
                 	ext = ext.substring( 0, ext.length() - incomplete_suffix.length());
                 }
@@ -1229,8 +1274,27 @@ DiskManagerImpl
 	                if (!mustExistOrAllocate && !skip_incomplete_file_checks && cache_file.exists()){
 	
 						data_file.delete();
+						
+	                }else{
+		
+		                	// handle case where file has incomplete suffix but file without the suffix exists
+		                	// for example, someone has copied the final file into place to recover things
+		                
+		                if ( !skip_incomplete_file_checks && has_incomp_suffix && !data_file.exists()){
+		                	
+		                	String name = data_file.getName();
+		                	
+		                	File temp = FileUtil.newFile( data_file.getParentFile(), name.substring( 0, name.length() - incomplete_suffix.length()));
+		                	
+		                	if ( temp.exists()){
+		                			
+		                		FileUtil.log( "Moving '" + temp + "' to '" + data_file + "' to restore the incomplete file suffix" );
+		                		
+			                	FileUtil.renameFile( temp, data_file );
+		                	}
+		                }
 	                }
-	
+	                
 	                if ( skip_incomplete_file_checks || cache_file.exists() ){
 	
 	                	boolean did_allocate = false;
@@ -1836,7 +1900,7 @@ DiskManagerImpl
 	
 		                    			int	file_index = this_file.getIndex();
 	
-		                    			File link = state.getFileLink( file_index, base_file );
+		                    			File link = state.getFileLink( file_index );
 	
 		                    			if ( link != null ){
 	
@@ -1938,7 +2002,7 @@ DiskManagerImpl
 	                    		}
 	                        }catch ( Throwable e ){
 	
-	                            setFailed( this_file.getCacheFile().exists()?DiskManager.ET_WRITE_ERROR:DiskManager.ET_FILE_MISSING, "Disk access error", e );
+	                            setFailed( this_file.getCacheFile().exists()?DiskManager.ET_WRITE_ERROR:DiskManager.ET_FILE_MISSING, "Disk access error", e, false );
 	
 	                            Debug.printStackTrace(e);
 	                        }
@@ -2181,13 +2245,60 @@ DiskManagerImpl
 		return( errorType );
 	}
 
+	private boolean
+	canFailureBeIgnored(
+		Throwable	cause )
+	{
+		return( switch_to_upload_only_enable &&  DiskManagerUtil.isFileWriteException(cause));
+	}
+	
+	@Override
+	public boolean
+	isUploadOnly()
+	{
+		return( switched_to_upload_only );
+	}
+	
+	@Override
+	public void
+	rateLimitChanged()
+	{
+		if ( switched_to_upload_only ){
+		
+				// user has explicitly switched out of disabled mode
+			
+			if ( download_manager.getStats().getDownloadRateLimitBytesPerSecond() != -1 ){
+				
+				switched_to_upload_only = false;
+			}
+		}
+	}
+	
     @Override
     public void
     setFailed(
     	int					type,
         String        		reason,
-        Throwable			cause )
+        Throwable			cause,
+        boolean				can_continue )
     {
+    	if ( can_continue && canFailureBeIgnored( cause )){
+    		    			
+    		download_manager.getStats().setDownloadRateLimitBytesPerSecond( -1 );
+    		
+    		if ( !switched_to_upload_only ){
+    			
+    			switched_to_upload_only = true;
+    			
+	    		String msg = 	MessageText.getString( "download.error.upload.only", new String[]{ getDisplayName() }) +  
+	    							" (" + reason + ": " + Debug.getNestedExceptionMessage( cause ) + ")";
+	    		
+	    		Logger.log(new LogAlert(DiskManagerImpl.this, LogAlert.REPEATABLE, LogAlert.AT_WARNING, msg ));
+    		}
+    		
+    		return;
+    	}
+    	
             /**
              * need to run this on a separate thread to avoid deadlock with the stopping
              * process - setFailed tends to be called from within the read/write activities
@@ -2587,7 +2698,18 @@ DiskManagerImpl
 
         throws Exception
     {
-        resume_handler.saveResumeData( interim_save );
+    	try{
+    		resume_handler.saveResumeData( interim_save );
+    		
+    	}catch( Exception e ){
+    		
+    		if ( interim_save && canFailureBeIgnored( e )){
+    			
+    			return;
+    		}
+    		
+    		throw( e );
+    	}
     }
 
     @Override
@@ -2705,7 +2827,7 @@ DiskManagerImpl
             	  }
               }catch( Throwable e ){
             	  
-                  setFailed( DiskManager.ET_OTHER, "Resume data save fails", e );
+                  setFailed( DiskManager.ET_OTHER, "Resume data save fails", e, false );
               }
           }
       }
@@ -2915,6 +3037,8 @@ DiskManagerImpl
 			  
 			  reader.setSuspended( true );
 			  
+			  DownloadManagerState dms = download_manager.getDownloadState();
+			  
 			  boolean simple_torrent = download_manager.getTorrent().isSimpleTorrent();
 	
 			  // absolute save location does not follow links
@@ -2940,7 +3064,7 @@ DiskManagerImpl
 	
 				  File old_file = files[i].getFile(false);
 	
-				  File linked_file = FMFileManagerFactory.getSingleton().getFileLink( torrent, i, old_file );
+				  File linked_file = dms.getFileLink( i, new StringInterner.FileKey( old_file )).getFile();
 	
 				  if ( !linked_file.equals(old_file)){
 	
@@ -3628,10 +3752,11 @@ DiskManagerImpl
 
     public static void
     deleteDataFiles(
-        TOTorrent   torrent,
-        String      torrent_save_dir,       // enclosing dir, not for deletion
-        String      torrent_save_file, 		// file or dir for torrent
-        boolean		force_no_recycle )
+    	DownloadManager	dm,
+        TOTorrent   	torrent,
+        String      	torrent_save_dir,       // enclosing dir, not for deletion
+        String      	torrent_save_file, 		// file or dir for torrent
+        boolean			force_no_recycle )
     {
         if (torrent == null || torrent_save_file == null ){
 
@@ -3641,9 +3766,11 @@ DiskManagerImpl
         try{
             if (torrent.isSimpleTorrent()){
 
+            	DownloadManagerState	dms = dm.getDownloadState();
+
                 File    target = FileUtil.newFile( torrent_save_dir, torrent_save_file );
 
-                target = FMFileManagerFactory.getSingleton().getFileLink( torrent, 0, target.getCanonicalFile());
+                target = dms.getFileLink( 0, new StringInterner.FileKey( target.getCanonicalFile())).getFile();
 
                 FileUtil.deleteWithRecycle( target, force_no_recycle );
 
@@ -3667,7 +3794,7 @@ DiskManagerImpl
 
         				// only delete the dir if there's only this torrent's files in it!
 
-        			int numDataFiles = countDataFiles( torrent, torrent_save_dir, torrent_save_file );
+        			int numDataFiles = countDataFiles( dm, torrent, torrent_save_dir, torrent_save_file );
         			
         			if ( countFiles( FileUtil.newFile(dir), numDataFiles) == numDataFiles){
 
@@ -3680,7 +3807,7 @@ DiskManagerImpl
             	
     			if ( !deleted ){
     					
-    				deleteDataFileContents( torrent, torrent_save_dir, torrent_save_file, force_no_recycle );
+    				deleteDataFileContents( dm, torrent, torrent_save_dir, torrent_save_file, force_no_recycle );
     			}
             }
         }catch( Throwable e ){
@@ -3724,15 +3851,18 @@ DiskManagerImpl
 	 */
     private static int
     countDataFiles(
-        TOTorrent torrent,
-        String torrent_save_dir,
-        String torrent_save_file )
+    	DownloadManager	dm,
+        TOTorrent		torrent,
+        String			torrent_save_dir,
+        String			torrent_save_file )
     {
         try{
             int res = 0;
 
             LocaleUtilDecoder locale_decoder = LocaleTorrentUtil.getTorrentEncoding( torrent );
 
+            DownloadManagerState dms = dm.getDownloadState();
+            
             TOTorrentFile[] files = torrent.getFiles();
 
             for (int i=0;i<files.length;i++){
@@ -3752,7 +3882,7 @@ DiskManagerImpl
 
                 file = file.getCanonicalFile();
 
-                File linked_file = FMFileManagerFactory.getSingleton().getFileLink( torrent, i, file );
+                File linked_file = dms.getFileLink( i, new StringInterner.FileKey( file )).getFile();
 
                 boolean skip = false;
 
@@ -3782,21 +3912,23 @@ DiskManagerImpl
 
     private static void
     deleteDataFileContents(
-        TOTorrent torrent,
-        String torrent_save_dir,
+    	DownloadManager	dm,
+        TOTorrent 	torrent,
+        String 		torrent_save_dir,
         String 		torrent_save_file,
         boolean		force_no_recycle )
 
             throws TOTorrentException, UnsupportedEncodingException, LocaleUtilEncodingException
     {
+    	DownloadManagerState	dms = dm.getDownloadState();
+    	    	
     	LocaleUtilDecoder locale_decoder = LocaleTorrentUtil.getTorrentEncoding( torrent );
 
     	TOTorrentFile[] files = torrent.getFiles();
 
     	File root_path_file = FileUtil.newFile( torrent_save_dir, torrent_save_file );
-
-    	FMFileManager fm_factory = FMFileManagerFactory.getSingleton();
-    	boolean has_links = fm_factory.hasLinks(torrent);
+    	
+    	boolean has_links = dms.getFileLinks().size() > 0;
 
     	if (!has_links) {
     		if	(!root_path_file.isDirectory()) {
@@ -3838,7 +3970,7 @@ DiskManagerImpl
             boolean delete;
 
             if (has_links) {
-            	File linked_file = fm_factory.getFileLink( torrent, i, file );
+            	File linked_file = dms.getFileLink( i, new StringInterner.FileKey( file )).getFile();
 
             	if ( linked_file == file ){
 
@@ -3942,22 +4074,27 @@ DiskManagerImpl
   {
       DownloadManagerState  state = download_manager.getDownloadState();
 
-      Map   details = new HashMap();
+      Map   new_map = new HashMap();
 
       List  downloaded = new ArrayList();
 
-      details.put( "downloaded", downloaded );
+      new_map.put( "downloaded", downloaded );
 
       for (int i=0;i<files.length;i++){
 
           downloaded.add( new Long( files[i].getDownloaded()));
       }
 
-      state.setMapAttribute( DownloadManagerState.AT_FILE_DOWNLOADED, details );
+      Map old_map = state.getMapAttribute( DownloadManagerState.AT_FILE_DOWNLOADED );
 
-      if ( persist ){
-
-    	  state.save( interim );
+      if ( !BEncoder.mapsAreIdentical(new_map, old_map)){
+    	  
+	      state.setMapAttribute( DownloadManagerState.AT_FILE_DOWNLOADED, new_map );
+	
+	      if ( persist ){
+	
+	    	  state.save( interim );
+	      }
       }
   }
 
@@ -4098,20 +4235,6 @@ DiskManagerImpl
         }
 
         return( getStorageTypes( download_manager )[fileIndex]);
-    }
-
-    public static void
-    setFileLinks(
-        DownloadManager         download_manager,
-        LinkFileMap    			links )
-    {
-        try{
-            CacheFileManagerFactory.getSingleton().setFileLinks( download_manager.getTorrent(), links );
-
-        }catch( Throwable e ){
-
-            Debug.printStackTrace(e);
-        }
     }
 
     /* (non-Javadoc)

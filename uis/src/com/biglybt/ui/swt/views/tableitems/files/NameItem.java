@@ -40,6 +40,7 @@ import com.biglybt.core.download.DownloadManager;
 import com.biglybt.core.internat.MessageText;
 import com.biglybt.core.torrent.TOTorrentFile;
 import com.biglybt.core.util.AERunnable;
+import com.biglybt.core.util.AsyncDispatcher;
 import com.biglybt.core.util.Constants;
 import com.biglybt.core.util.Debug;
 import com.biglybt.core.util.FileUtil;
@@ -75,7 +76,7 @@ import com.biglybt.core.CoreOperationTask;
 public class NameItem extends CoreTableColumnSWT implements
 	TableCellLightRefreshListener, ObfuscateCellText,
 	TableCellSWTPaintListener, TableCellMouseMoveListener,
-	TableCellInplaceEditorListener
+	TableCellInplaceEditorListener, TableCellToolTipListener
 {
 	private static final String ID_CHECKHITAREA		= "checkHitArea";
 
@@ -93,12 +94,14 @@ public class NameItem extends CoreTableColumnSWT implements
 				public void parameterChanged(String parameterName){
 					NEVER_SHOW_TWISTY =	!COConfigurationManager.getBooleanParameter("FilesView.use.tree");
 				}
-			});;	
+			});	
 	}
 
 	
 	private static boolean bShowIcon;
 
+	private static AsyncDispatcher dispatcher = new AsyncDispatcher( "NameItem" );
+	
 	private ParameterListener configShowProgramIconListener;
 
 	final TableContextMenuItem menuItem;
@@ -555,7 +558,27 @@ public class NameItem extends CoreTableColumnSWT implements
 
 		cell.setToolTip(tooltip.length()==0?null:tooltip);
 	}
-	
+
+	@Override
+	public void cellHover(TableCell cell) {
+		DiskManagerFileInfo fileInfo = (DiskManagerFileInfo) cell.getDataSource();
+		String tooltip;
+		if (fileInfo == null) {
+			tooltip = null;
+		} else {
+			String name = fileInfo.getFile(true).getName();
+			String origName = fileInfo.getFile( false ).getName();
+			tooltip = name.equals(origName) ? name : name + "\n" + origName;
+		}
+
+		cell.setToolTip(tooltip);
+	}
+
+	@Override
+	public void cellHoverComplete(TableCell cell) {
+		cell.setToolTip(null);
+	}
+
 	@Override
 	public String getClipboardText(TableCell cell) {
 		final DiskManagerFileInfo fileInfo = (DiskManagerFileInfo) cell.getDataSource();
@@ -639,7 +662,10 @@ public class NameItem extends CoreTableColumnSWT implements
 							TableRowCore rowCore = (TableRowCore) row;
 							if ( rowCore != null ){
 							
-								Utils.getOffOfSWTThread( AERunnable.create(()->{
+									// we really don't want lots of concurrently running threads
+									// switching skip state...
+								
+								dispatcher.dispatch( AERunnable.create(()->{
 									
 									if ( fileInfo instanceof FilesView.FilesViewTreeNode ){
 										
@@ -656,7 +682,7 @@ public class NameItem extends CoreTableColumnSWT implements
 											}else if ( old_skipped == 1 ){
 												new_skipped = true;
 											}else{
-												new_skipped = true;
+												new_skipped = false;	// intermediate -> checked
 											}
 											
 											// disconcerting if we don't force the checkbox state

@@ -44,12 +44,18 @@ SearchSubsResultBase
 	public int
 	getNbSeeds();
 	
+	public int
+	getNbPeers();
+	
 	public String
 	getSeedsPeers();
 
 	public long
 	getSeedsPeersSortValue();
 
+	public int
+	getNbCompleted();
+	
 	public String
 	getVotesComments();
 
@@ -71,6 +77,9 @@ SearchSubsResultBase
 	public String[]
 	getTags();
 
+	public String
+	getDescription();
+	
 	public long
 	getTime();
 

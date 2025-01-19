@@ -29,13 +29,16 @@ package com.biglybt.core.util;
  * This class exists to support the invocation of listeners while *not* synchronized.
  * This is important as in general it is a bad idea to invoke an "external" component
  * whilst holding a lock on something as unexpected deadlocks can result.
- * It has been introduced to reduce the likelyhood of such deadlocks
+ * It has been introduced to reduce the likelihood of such deadlocks
  */
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import com.biglybt.core.logging.LogEvent;
 import com.biglybt.core.logging.LogIDs;
@@ -70,14 +73,14 @@ ListenerManager<T>
 	private ListenerManagerDispatcherWithException<T>		target_with_exception;
 
 	private final boolean		async;
-	private AEThread2	async_thread;
+	private AEThread2			async_thread;
 
 	private CopyOnWriteList<T>			listeners		= new CopyOnWriteList<>();
 
 	private List<Object[]>	dispatch_queue;
 	private AESemaphore		dispatch_sem;
 
-	private int		logged_too_many_count;
+	private int		logged_too_many_count_next	= 50;
 	
 	protected
 	ListenerManager(
@@ -131,9 +134,9 @@ ListenerManager<T>
 
 			int num_listeners = listeners.size();
 			
-			if ( num_listeners % 50 == 0 && num_listeners > logged_too_many_count ){
+			if ( num_listeners == logged_too_many_count_next ){
 				
-				logged_too_many_count = num_listeners;
+				logged_too_many_count_next *= 5;
 				
 				Logger.log(
 					new LogEvent(
@@ -141,7 +144,21 @@ ListenerManager<T>
 						num_listeners + " listeners added for " + name + "\n\t" + Debug.getStackTrace(true, false)));
 
 				if ( Constants.IS_CVS_VERSION ){
-					Debug.outNoStack( num_listeners + " listeners added for " + name + "\n\t" + Debug.getStackTrace(true, false) + "\n\t" + listeners.getList());
+															
+					List<String> strings = listeners.getList().stream().map((o)->String.valueOf( o.getClass())).collect( Collectors.toList());
+					
+					Map<String,Integer> counts = new HashMap<>();
+					
+					for( String str: strings ){
+						counts.put(str, counts.getOrDefault(str, 0) + 1);
+					}
+					
+					List<String> sorted = 
+						counts.entrySet().stream().
+							sorted(( a, b )->b.getValue().compareTo(a.getValue())).
+								map((e)->{return(e.getValue() + " * " + e.getKey());}).collect( Collectors.toList());
+					
+					Debug.outNoStack( num_listeners + " listeners added for " + name + "\n\t" + Debug.getStackTrace(true, false) + "\n\t" + sorted );
 				}
 			}
 

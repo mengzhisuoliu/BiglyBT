@@ -124,7 +124,7 @@ public class TrackerView
 		tv = TableViewFactory.createTableViewSWT(
 				PLUGIN_DS_TYPE,
 				TableManager.TABLE_TORRENT_TRACKERS,
-				getPropertiesPrefix(),
+				getTextPrefixID(),
 				basicItems,
 				basicItems[0].getName(),
 				SWT.MULTI | SWT.FULL_SELECTION | SWT.VIRTUAL );
@@ -269,6 +269,7 @@ public class TrackerView
 
 			if ( 	( 	state == TrackerPeerSource.ST_ONLINE ||
 						state == TrackerPeerSource.ST_QUEUED ||
+						state == TrackerPeerSource.ST_STOPPED ||		// scrape for stopped downloads
 						state == TrackerPeerSource.ST_ERROR ) &&
 					!ps.isUpdating() &&
 					ps.canManuallyUpdate()){

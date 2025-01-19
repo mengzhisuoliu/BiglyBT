@@ -68,6 +68,8 @@ import com.biglybt.pif.ui.UIInstance;
 import com.biglybt.pif.ui.UIManagerListener;
 import com.biglybt.pif.ui.config.BooleanParameter;
 import com.biglybt.pif.ui.config.ConfigSection;
+import com.biglybt.pif.ui.config.DirectoryParameter;
+import com.biglybt.pif.ui.config.FileParameter;
 import com.biglybt.pif.ui.config.IntParameter;
 import com.biglybt.pif.ui.config.Parameter;
 import com.biglybt.pif.ui.config.StringListParameter;
@@ -139,6 +141,8 @@ MagnetPlugin
 	private IntParameter	 	sources_extra_param;
 	private BooleanParameter	magnet_recovery;
 	private IntParameter	 	magnet_recovery_concurrency;
+	private BooleanParameter	magnet_rename;
+	private DirectoryParameter	storage_folder;
 
 	private Map<String,BooleanParameter> net_params = new HashMap<>();
 
@@ -212,16 +216,17 @@ MagnetPlugin
 		
 		magnet_recovery.addEnabledOnSelection( magnet_recovery_concurrency );
 
-		BooleanParameter rename = config.addBooleanParameter2( "MagnetPlugin.rename.using.dn", "MagnetPlugin.rename.using.dn", false );
+		magnet_rename = config.addBooleanParameter2( "MagnetPlugin.rename.using.dn", "MagnetPlugin.rename.using.dn", false );
 		
 		BooleanParameter rename_ext = config.addBooleanParameter2( "MagnetPlugin.rename.using.dn.only.with.ext", "MagnetPlugin.rename.using.dn.only.with.ext", false );	
 		
 		rename_ext.setIndent( 1, true );
 		
-		rename.addEnabledOnSelection( rename_ext );
+		magnet_rename.addEnabledOnSelection( rename_ext );
 		
-		BooleanParameter position = config.addBooleanParameter2( "MagnetPlugin.dl.position.from.mag.time", "MagnetPlugin.dl.position.from.mag.time", true );
-
+		config.addBooleanParameter2( "MagnetPlugin.dl.position.from.mag.time", "MagnetPlugin.dl.position.from.mag.time", true );
+		
+		storage_folder = config.addDirectoryParameter2( "MagnetPlugin.storage.folder", "MagnetPlugin.storage.folder", getDefaultStorageDir().getAbsolutePath());
 		
 		Parameter[] nps = new Parameter[ AENetworkClassifier.AT_NETWORKS.length ];
 
@@ -724,7 +729,7 @@ MagnetPlugin
 
 					}catch( DownloadException e ){
 
-						throw( new MagnetURIHandlerException( "Operation failed", e ));
+						throw( new MagnetURIHandlerException( "Operation failed", false, e ));
 					}
 				}
 
@@ -781,7 +786,7 @@ MagnetPlugin
 						if ( instance.getUIType().equals(UIInstance.UIT_SWT) ){
 
 							try{
-								Class.forName("com.biglybt.plugin.magnet.swt.MagnetPluginUISWT").getConstructor(
+								Class.forName("com.biglybt.ui.swt.plugin.magnet.swt.MagnetPluginUISWT").getConstructor(
 									new Class[]{ UIInstance.class, TableContextMenuItem[].class }).newInstance(
 										new Object[]{ instance, menus.toArray( new TableContextMenuItem[menus.size()])} );
 
@@ -905,6 +910,12 @@ MagnetPlugin
 				});
 	}
 
+	protected boolean
+	getRenameDisplayName()
+	{
+		return( magnet_rename != null && magnet_rename.getValue());
+	}
+	
 	public String
 	addSource(
 		Download			download,
@@ -984,7 +995,7 @@ MagnetPlugin
 				conc = 1;
 			}
 			
-			ThreadPool tp = new ThreadPool( "Magnet Recovery", conc, true );
+			ThreadPool<AERunnable> tp = new ThreadPool<AERunnable>( "Magnet Recovery", conc, true );
 			
 			List<Map> sorted = new ArrayList<Map>( active.values());
 			
@@ -1018,6 +1029,31 @@ MagnetPlugin
 				//System.out.println( "Recovering: " + map );
 					
 				byte[]	hash = (byte[])map.get( "hash" );
+				
+				try{
+					Download existing_download = plugin_interface.getDownloadManager().getDownload( hash );
+					
+					if ( existing_download != null ){
+						
+						Debug.outNoStack( "Download '" + existing_download.getName() + "' already present, ignoring magnet recovery" );
+						
+						synchronized( download_activities ){
+							
+							Map temp = COConfigurationManager.getMapParameter( "MagnetPlugin.active.magnets", new HashMap());
+						
+							String hash_str = Base32.encode( hash );
+							
+							temp.remove( hash_str );
+						}
+						
+						COConfigurationManager.setDirty();
+						
+						continue;
+					}
+				}catch( Throwable e ){
+					
+					Debug.out( e );
+				}
 				
 				try{
 
@@ -1091,7 +1127,10 @@ MagnetPlugin
 										failed(
 											MagnetURIHandlerException error )
 										{
-											Debug.out( error );
+											if ( !error.isManuallyCancelled()){
+											
+												Debug.out( error );
+											}
 										}
 										
 										@Override
@@ -1102,7 +1141,7 @@ MagnetPlugin
 											if ( result != null ){
 												
 												try{
-													TOTorrent torrent = TOTorrentFactory.deserialiseFromBEncodedByteArray( result );
+													TOTorrent torrent = TOTorrentFactory.deserialiseFromBEncodedByteArray( new TOTorrentFactory.TorrentDataHolder( result ));
 													
 													String	torrent_name = FileUtil.convertOSSpecificChars( TorrentUtils.getLocalisedName( torrent ) + ".torrent", false );
 													
@@ -1202,11 +1241,9 @@ MagnetPlugin
 		AEThread2.createAndStartDaemon( "MagnetPlugin:mdtidy", ()->{
 			
 			try{
-				File torrents_dir = FileUtil.getUserFile( "torrents" );
-
-				File md_dir = FileUtil.newFile( torrents_dir, "md" );
+				File storage_dir = getStorageDir();
 				
-				File[] files = md_dir.listFiles();
+				File[] files = storage_dir.listFiles();
 				
 				if ( files != null ){
 					
@@ -1233,6 +1270,39 @@ MagnetPlugin
 				Debug.out( e );
 			}
 		});
+	}
+	
+	protected File
+	getDefaultStorageDir()
+	{
+		File torrents_dir = FileUtil.getUserFile( "torrents" );
+
+		File md_dir = FileUtil.newFile( torrents_dir, "md" );
+		
+		if ( !md_dir.exists()){
+			
+			FileUtil.mkdirs( md_dir );
+		}
+		
+		return( md_dir );
+	}
+	
+	protected File
+	getStorageDir()
+	{
+		File dir = new File( storage_folder.getValue());
+		
+		if ( !dir.exists()){
+			
+			dir.mkdirs();
+			
+			if ( !dir.exists()){
+				
+				dir = getDefaultStorageDir();
+			}
+		}
+		
+		return( dir );
 	}
 	
 	private void
@@ -1491,7 +1561,7 @@ MagnetPlugin
 		}catch( Throwable e ) {
 			
 			try{
-				_dl_listener.failed( new MagnetURIHandlerException( "Magnet download failed", e ));
+				_dl_listener.failed( new MagnetURIHandlerException( "Magnet download failed", false, e ));
 				
 			}finally{
 			
@@ -1767,11 +1837,12 @@ MagnetPlugin
 		if ( dn != null || new_web_seeds.size() > 0 || new_trackers.size() > 0 || networks.size() > 0 || !initial_tags.isEmpty() || !other_metadata.isEmpty()){
 
 			try{
-				TOTorrent torrent = TOTorrentFactory.deserialiseFromBEncodedByteArray( torrent_data );
+				TOTorrent torrent = TOTorrentFactory.deserialiseFromBEncodedByteArray(new TOTorrentFactory.TorrentDataHolder( torrent_data ));
 
 				boolean	update_torrent = false;
 
-				if ( dn != null ){
+				
+				if ( dn != null && getRenameDisplayName()){
 					
 					if ( TorrentUtils.getDisplayName( torrent ) == null ){
 						
@@ -2155,7 +2226,7 @@ MagnetPlugin
 
 				}else{
 
-					error = new MagnetURIHandlerException( "Download failed", _error );
+					error = new MagnetURIHandlerException( "Download failed", false, _error );
 				}
 				
 				to_do = listeners;
@@ -2412,9 +2483,13 @@ MagnetPlugin
 
 										if ( dummy_hash || Arrays.equals( torrent.getHash(), hash )){
 
+											Map map = torrent.serialiseToMap();
+											
+											torrent = null;
+											
 											synchronized( md_downloader ){
 
-												result_holder[0] = BEncoder.encode( torrent.serialiseToMap());
+												result_holder[0] = BEncoder.encode( map );
 											}
 										}
 									}
@@ -2453,6 +2528,8 @@ MagnetPlugin
 							if ( result_holder[0] != null ){
 								
 								result_listener.complete( new DownloadResult( result_holder[0], networks_enabled, additional_networks,  md_downloader[0] ));
+								
+								result_holder[0] = null;
 								
 								return;
 							}
@@ -2548,7 +2625,7 @@ MagnetPlugin
 									@Override
 									public void
 									complete(
-										TOTorrent		torrent,
+										TOTorrent[]		torrent,
 										Set<String>		peer_networks )
 									{
 										if ( listener != null ){
@@ -2560,7 +2637,11 @@ MagnetPlugin
 											additional_networks.addAll( peer_networks );
 
 											try{
-												result_holder[0] = BEncoder.encode( torrent.serialiseToMap());
+												Map map = torrent[0].serialiseToMap();
+											
+												torrent[0] = null;
+											
+												result_holder[0] = BEncoder.encode(  map );
 
 											}catch( Throwable e ){
 
@@ -2632,6 +2713,8 @@ MagnetPlugin
 							if ( result_holder[0] != null ){
 
 								result_listener.complete( new DownloadResult( result_holder[0], networks_enabled, additional_networks, md_downloader[0] ));
+								
+								result_holder[0] = null;
 								
 								return;
 							}
@@ -2884,6 +2967,8 @@ MagnetPlugin
 										
 										result_listener.complete( new DownloadResult( result_holder[0], networks_enabled, additional_networks, md_downloader[0] ));
 										
+										result_holder[0] = null;
+										
 										return;
 									}
 									
@@ -3006,7 +3091,7 @@ MagnetPlugin
 													byte[]	data = (byte[])value.getValue(byte[].class);
 
 													try{
-														TOTorrent torrent = TOTorrentFactory.deserialiseFromBEncodedByteArray( data );
+														TOTorrent torrent = TOTorrentFactory.deserialiseFromBEncodedByteArray( new TOTorrentFactory.TorrentDataHolder( data ));
 
 														if ( Arrays.equals( hash, torrent.getHash())){
 
@@ -3062,6 +3147,8 @@ MagnetPlugin
 									if ( result_holder[0] != null ){
 
 										result_listener.complete( new DownloadResult( result_holder[0], networks_enabled, additional_networks, md_downloader[0] ));
+										
+										result_holder[0] = null;
 										
 										return;
 									}
@@ -3133,12 +3220,16 @@ MagnetPlugin
 														done = true;
 														
 														result_listener.complete( new DownloadResult( result_holder[0], networks_enabled, additional_networks, md_downloader[0] ));
-																												
+																
+														result_holder[0] = null;
+														
 													}else if ( result_error[0] != null ){
 						
 														done = true;
 														
-														result_listener.failed( new MagnetURIHandlerException( "MagnetURIHandler failed", result_error[0] ));
+														boolean mc = manually_cancelled[0];
+														
+														result_listener.failed( new MagnetURIHandlerException( "MagnetURIHandler failed", mc, result_error[0] ));
 													}
 												}
 												
@@ -3157,6 +3248,8 @@ MagnetPlugin
 										
 										if ( done ){
 											
+											MagnetPluginMDDownloader downloader = null;
+											
 											synchronized( md_downloader ){
 												
 												try{
@@ -3164,17 +3257,17 @@ MagnetPlugin
 									
 														md_delay_event[0].cancel();
 									
-														MagnetPluginMDDownloader downloader = md_downloader[0];
-														
-														if ( downloader != null ){
-									
-															downloader.cancel();
-														}
+														downloader = md_downloader[0];
 													}
 												}finally{
 													
 													final_timer[0].cancel();
 												}
+											}
+											
+											if ( downloader != null ){
+												
+												downloader.cancel();
 											}
 										}
 									}
@@ -3189,34 +3282,42 @@ MagnetPlugin
 
 			}catch( Throwable e ){
 
-				Debug.printStackTrace(e);
-
+				synchronized( md_downloader ){
+					
+					if ( !manually_cancelled[0]){
+						
+						Debug.printStackTrace(e);
+					}
+				}
+				
 				if ( listener != null ){
 					listener.reportActivity( getMessageText( "report.error", Debug.getNestedExceptionMessage(e)));
 				}
 
-				result_listener.failed( new MagnetURIHandlerException( "MagnetURIHandler failed", e ));
+				result_listener.failed( new MagnetURIHandlerException( "MagnetURIHandler failed", false, e ));
 				
 				return;
 			}
 		}finally{
 
-			if ( final_timer[0] == null ){
-				
-				synchronized( md_downloader ){
-	
+			MagnetPluginMDDownloader downloader = null;
+			
+			synchronized( md_downloader ){
+
+				if ( final_timer[0] == null ){
+					
 					if ( md_delay_event[0] != null ){
 	
 						md_delay_event[0].cancel();
 	
-						MagnetPluginMDDownloader downloader = md_downloader[0];
-						
-						if ( downloader != null ){
-	
-							downloader.cancel();
-						}
+						downloader = md_downloader[0];
 					}
 				}
+			}
+			
+			if ( downloader != null ){
+					
+				downloader.cancel();
 			}
 		}
 	}

@@ -26,6 +26,7 @@ import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
 
 import com.biglybt.core.util.*;
+import com.biglybt.core.util.StringInterner.StringSupplier;
 import com.biglybt.ui.common.table.TableCellCore;
 import com.biglybt.ui.common.table.TableColumnCore;
 import com.biglybt.ui.common.table.TableRowCore;
@@ -76,8 +77,8 @@ public class TableRowPainted
 
 	private Object			colorLock = new Object();
 	
-	private CopyOnWriteList<Object[]>	FGRequesters = new CopyOnWriteList<>(1);
-	private CopyOnWriteList<Object[]>	BGRequesters = new CopyOnWriteList<>(1);
+	private CopyOnWriteList<Object[]>	FGRequesters;
+	private CopyOnWriteList<Object[]>	BGRequesters;
 	
 	public TableRowPainted(TableRowCore parentRow, TableViewPainted tv,
 			Object dataSource, boolean triggerHeightChange) {
@@ -570,26 +571,85 @@ public class TableRowPainted
 		}
 	}
 	
-	private void swt_fakeRedraw( String col_name ) {
+	private static final Map<Integer,Object[]> fake_images = new HashMap<>();
+	
+	private static GC
+	getFakeImageGC(
+		Rectangle	bounds  )
+	{
+		int height = bounds.height;
 		
+		Object[] existing = fake_images.get( height );
+		
+		if ( existing != null ){
+			
+			return((GC)existing[0]);
+		}
+		
+		Image image = new Image(Utils.getDisplay(), bounds.width, height);
+		
+		GC gc = new GC(image);
+		
+		fake_images.put( height, new Object[]{ gc, image });
+		
+		SimpleTimer.addEvent(
+			"FakeImageDisposer", 
+			SystemTime.getOffsetTime(30*1000), 
+			(ev)->{					
+				Utils.execSWTThread(()->{
+			
+					Object[] entry = fake_images.remove( height );
+					
+					if ( entry == null ){
+						
+						Debug.out( "eh?" );
+						
+					}else{
+						
+						((GC)entry[0]).dispose();
+				
+						((Image)entry[1]).dispose();
+					}
+				});
+			});
+			
+		return( gc );
+	}
+	
+	private void 
+	swt_fakeRedraw( 
+		String col_name ) 
+	{
 		setShown( true, true );
 		
 		TableCellPainted cell = (TableCellPainted)getTableCellCore( col_name  );
 
 		if ( cell != null ){
-			if ( cell.getBoundsRaw() == null ){
+			
+			Rectangle bounds = new Rectangle( 0, 0, 9999, getHeight());
+			
+			if ( bounds.height <= 0 ){
 				
-				cell.setBoundsRaw( new Rectangle( 0, 0, 1000, getHeight() ));
+					// hidden, probably due to filter
+				
+				return;
 			}
 			
-			cell.refresh( true, true, true );
+			boolean boundsSet = false;
 			
-			Image image = new Image(Utils.getDisplay(), 1000, getHeight());
-			
-			GC gc = new GC(image);
+			if ( cell.getBoundsRaw() == null ){
+				
+				cell.setBoundsRaw( bounds );
+				
+				boundsSet = true;
+			}
 			
 			try{
-				swt_paintCell( gc, image.getBounds(), (TableCellSWTBase)cell, null, false, false, false );
+				cell.refresh( true, true, true );
+								
+				GC gc = getFakeImageGC( bounds );
+			
+				swt_paintCell( gc, bounds, (TableCellSWTBase)cell, null, false, false, false );
 			
 				if ( isExpanded()){
 					
@@ -606,9 +666,10 @@ public class TableRowPainted
 				}
 			}finally{
 				
-				gc.dispose();
-			
-				image.dispose();
+				if ( boundsSet ){
+					
+					cell.setBoundsRaw( null );
+				}
 			}
 		}
 	}
@@ -676,7 +737,7 @@ public class TableRowPainted
 				//return;
 			}
 
-			String text = cell.getText();
+			StringSupplier textSupplier = cell.getTextSupplier();
 
 			Color fg = cell.getForegroundSWT();
 			if ( fg == null && enableColumnFG ){
@@ -749,7 +810,7 @@ public class TableRowPainted
 				cell.doPaint(gc);
 				gcChanged = true;
 			}
-			if (text.length() > 0) {
+			if ( !textSupplier.isEmpty()) {
 				int ofsx = 0;
 				Image image = cell.getIcon();
 				Rectangle imageBounds = null;
@@ -761,10 +822,6 @@ public class TableRowPainted
 					cellBounds.width -= ofs;
 				}
 				//System.out.println("PS " + getIndex() + ";" + cellBounds + ";" + cell.getText());
-				int style = TableColumnSWTUtils.convertColumnAlignmentToSWT(column.getAlignment());
-				if (cellBounds.height > 20) {
-					style |= SWT.WRAP;
-				}
 				int textOpacity = cell.getTextAlpha();
 				//gc.setFont(getRandomFont());
 				//textOpacity = 130;
@@ -791,9 +848,24 @@ public class TableRowPainted
 				cellBounds.y += 2;
 				cellBounds.height -= 4;
 				if (!cellBounds.isEmpty()) {
-					GCStringPrinter sp = new GCStringPrinter(gc, text, cellBounds, true,
-							cellBounds.height > 20, style);
+					
+					String text = textSupplier.get();
+					
+					int singleLineHeight = GCStringPrinter.stringExtent( gc, text ).y;
+										
+					boolean worthWrap = cellBounds.height >= singleLineHeight*2;
+					
+					int style = TableColumnSWTUtils.convertColumnAlignmentToSWT(column.getAlignment());
+					
+					if ( worthWrap ){
+						
+						style |= SWT.WRAP;
+					}
 
+					GCStringPrinter sp = new GCStringPrinter(gc, text, cellBounds, true, worthWrap, style);
+
+					sp.calculateMetrics();
+					
 					if (shadowColor != null) {
 						Color oldFG = gc.getForeground();
 						gc.setForeground(shadowColor);
@@ -818,7 +890,7 @@ public class TableRowPainted
 						cell.setDefaultToolTip(null);
 					} else {
 
-						cell.setDefaultToolTip(text);
+						cell.setDefaultToolTip(textSupplier);
 					}
 
 					Point psize = sp.getCalculatedPreferredSize();
@@ -1364,6 +1436,11 @@ public class TableRowPainted
 			return( colorFG );
 		}
 		
+		if ( FGRequesters == null ){
+			
+			return( null );
+		}
+		
 		List<Object[]> list = FGRequesters.getList();
 		
 		if ( !list.isEmpty()){
@@ -1378,6 +1455,11 @@ public class TableRowPainted
 	public Color 
 	getBackground() 
 	{
+		if ( BGRequesters == null ){
+			
+			return( null );
+		}
+
 		List<Object[]> list = BGRequesters.getList();
 		
 		if ( !list.isEmpty()){
@@ -1394,6 +1476,14 @@ public class TableRowPainted
 		ColorRequester 	requester,
 		Color			color )
 	{
+		synchronized( colorLock ){
+			
+			if ( FGRequesters == null ){
+				
+				FGRequesters = new CopyOnWriteList<>(1);
+			}
+		}
+		
 		requestColor( FGRequesters, requester, color );
 	}
 	
@@ -1403,6 +1493,14 @@ public class TableRowPainted
 		ColorRequester	requester,
 		Color			color )
 	{
+		synchronized( colorLock ){
+			
+			if ( BGRequesters == null ){
+				
+				BGRequesters = new CopyOnWriteList<>(1);
+			}
+		}
+		
 		requestColor( BGRequesters, requester, color );
 	}
 	
@@ -1663,7 +1761,10 @@ public class TableRowPainted
 	}
 	
 	@Override
-	public boolean sortSubRows(TableColumnCore col){
+	public boolean 
+	sortSubRows(
+		List<TableColumnCore> cols)
+	{
 		synchronized (subRows_sync) {
 			if ( subRows == null ){
 				return( false );
@@ -1680,16 +1781,21 @@ public class TableRowPainted
 					
 					if ( prev != null ){
 					
-						if ( col.compare( prev,  r ) > 0 ){
+						for ( TableColumnCore col: cols ){
 							
-							sorted = false;
+							if ( col.compare( prev,  r ) > 0 ){
+								
+								sorted = false;
+								
+								break;
+							}
 						}
 					}
 					
 					prev = r;
 				}
 				
-				if ( r.sortSubRows(col)){
+				if ( r.sortSubRows(cols)){
 					
 					changed = true;
 				}
@@ -1697,7 +1803,24 @@ public class TableRowPainted
 			
 			if ( !sorted ){
 			
-				Arrays.sort( subRows, col );
+				if ( cols.size() == 1 ){
+				
+					Arrays.sort( subRows, cols.get(0));
+					
+				}else{
+					
+					Arrays.sort(
+						subRows,
+						(o1, o2) -> {
+							for (TableColumnCore sortColumn : cols) {
+								int compare = sortColumn.compare(o1, o2);
+								if (compare != 0) {
+									return compare;
+								}
+							}
+							return 0;
+						});
+				}		
 				
 				for ( int i=0; i<subRows.length;i++){
 					subRows[i].setTableItem(i);

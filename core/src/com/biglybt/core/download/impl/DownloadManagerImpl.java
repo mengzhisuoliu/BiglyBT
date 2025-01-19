@@ -35,6 +35,8 @@ import com.biglybt.core.config.impl.TransferSpeedValidator;
 import com.biglybt.core.disk.*;
 import com.biglybt.core.disk.impl.DiskManagerImpl;
 import com.biglybt.core.disk.impl.DiskManagerUtil;
+import com.biglybt.core.disk.impl.piecemapper.DMPieceList;
+import com.biglybt.core.disk.impl.piecemapper.DMPieceMapEntry;
 import com.biglybt.core.download.*;
 import com.biglybt.core.global.GlobalManager;
 import com.biglybt.core.global.GlobalManagerEvent;
@@ -402,10 +404,16 @@ DownloadManagerImpl
 	static final Object TPS_Key = new Object();
 
 	public static volatile String	dnd_subfolder;
+	public static volatile String	dnd_alt_loc;
 
 	static{
 		COConfigurationManager.addAndFireParameterListeners(
-			new String[]{ "Enable Subfolder for DND Files", "Subfolder for DND Files" },
+			new String[]{ 
+				"Enable Subfolder for DND Files", 
+				"Subfolder for DND Files",
+				ConfigKeys.File.BCFG_ENABLE_ALT_LOC_FOR_DND_FILES,
+				ConfigKeys.File.SCFG_ALT_LOC_FOR_DND_FILES
+			},
 			new ParameterListener()
 			{
 				@Override
@@ -413,9 +421,9 @@ DownloadManagerImpl
 				parameterChanged(
 					String parameterName)
 				{
-					boolean enable  = COConfigurationManager.getBooleanParameter( "Enable Subfolder for DND Files" );
+					boolean sf_enable  = COConfigurationManager.getBooleanParameter( "Enable Subfolder for DND Files" );
 
-					if ( enable ){
+					if ( sf_enable ){
 
 						String folder = COConfigurationManager.getStringParameter( "Subfolder for DND Files" ).trim();
 
@@ -435,6 +443,24 @@ DownloadManagerImpl
 					}else{
 
 						dnd_subfolder = null;
+					}
+					boolean al_enable  = COConfigurationManager.getBooleanParameter( ConfigKeys.File.BCFG_ENABLE_ALT_LOC_FOR_DND_FILES );
+
+					if ( al_enable ){
+
+						String folder = COConfigurationManager.getStringParameter( ConfigKeys.File.SCFG_ALT_LOC_FOR_DND_FILES ).trim();
+
+						if ( folder.length() > 0 ){
+
+							dnd_alt_loc = folder;
+
+						}else{
+
+							dnd_alt_loc = null;
+						}
+					}else{
+
+						dnd_alt_loc = null;
 					}
 				}
 			});
@@ -723,6 +749,8 @@ DownloadManagerImpl
     private int		message_mode	= -1;
 
     private volatile int		tcp_port_override;
+
+    private volatile int		set_file_priority_high_pieces_rem	= 0;
     
 	// Only call this with STATE_QUEUED, STATE_WAITING, or STATE_STOPPED unless you know what you are doing
 
@@ -1080,6 +1108,8 @@ DownloadManagerImpl
 				 controller.setDownloadManagerState( download_manager_state );
 				 
 				 readParameters();
+				 
+				 readFilePriorityConfig( true, false );
 
 					// establish any file links
 
@@ -1096,7 +1126,7 @@ DownloadManagerImpl
 					 			};
 
 					 	@Override
-					  public void
+					 	public void
 					 	attributeEventOccurred(
 							DownloadManager dm, String attribute_name, int event_type)
 					 	{
@@ -1113,7 +1143,7 @@ DownloadManagerImpl
 
 					 			try{
 
-					 				setFileLinks();
+					 				fileLinksUpdated();
 
 					 			}finally{
 
@@ -1131,6 +1161,9 @@ DownloadManagerImpl
 
 					 				tc.resetTrackerUrl( false );
 					 			}
+							}else if ( attribute_name.equals( DownloadManagerState.AT_SET_FILE_PRIORITY_REM_PIECE )){
+								
+								readFilePriorityConfig( false, false );
 							}
 						}
 					};
@@ -1138,13 +1171,12 @@ DownloadManagerImpl
 				 download_manager_state.addListener(attr_listener, DownloadManagerState.AT_FILE_LINKS2, DownloadManagerStateAttributeListener.WRITTEN);
 				 download_manager_state.addListener(attr_listener, DownloadManagerState.AT_PARAMETERS, DownloadManagerStateAttributeListener.WRITTEN);
 				 download_manager_state.addListener(attr_listener, DownloadManagerState.AT_NETWORKS, DownloadManagerStateAttributeListener.WRITTEN);
+				 download_manager_state.addListener(attr_listener, DownloadManagerState.AT_SET_FILE_PRIORITY_REM_PIECE, DownloadManagerStateAttributeListener.WRITTEN);
 
 				 torrent	= download_manager_state.getTorrent();
 
 				 all_trackers.registerTorrent( torrent );
 				 
-				 setFileLinks();
-
 				 	// We can't have the identity of this download changing as this will screw up
 				 	// anyone who tries to maintain a unique set of downloads (e.g. the GlobalManager)
 				 	//
@@ -1265,13 +1297,13 @@ DownloadManagerImpl
 				 torrent_save_location = FileUtil.newFile( torrent_save_dir, torrent_save_file );
 
 				 	// final validity test must be based of potentially linked target location as file
-				 	// may have been re-targetted
+				 	// may have been re-targeted
 
 
 					// if this isn't a new torrent then we treat the absence of the enclosing folder
 					// as a fatal error. This is in particular to solve a problem with the use of
 				 	// externally mounted torrent data on OSX, whereby a re-start with the drive unmounted
-				 	// results in the creation of a local diretory in /Volumes that subsequently stuffs
+				 	// results in the creation of a local directory in /Volumes that subsequently stuffs
 				 	// up recovery when the volume is mounted
 
 				 	// changed this to only report the error on non-windows platforms
@@ -1403,7 +1435,7 @@ DownloadManagerImpl
 
 				 		// set up the dnd-subfolder status on addition
 
-				 	if ( persistent && !for_seeding && !torrent.isSimpleTorrent()){
+				 	if ( persistent && !torrent.isSimpleTorrent()){
 
 				 		String dnd_sf = dnd_subfolder;
 
@@ -1427,6 +1459,21 @@ DownloadManagerImpl
 					 					download_manager_state.setAttribute( DownloadManagerState.AT_DND_PREFIX, prefix );
 					 				}
 								}
+            				}
+            			}
+				 		
+				 		String dnd_al = dnd_alt_loc;
+
+				 		if ( dnd_al != null ){
+
+				 			if ( torrent.getFiles().length <= DownloadManagerStateFactory.MAX_FILES_FOR_INCOMPLETE_AND_DND_LINKAGE ){
+
+				 				if ( download_manager_state.getAttribute( DownloadManagerState.AT_DND_ALT_LOC ) == null ){
+
+				 					dnd_al = dnd_al + File.separator + ByteFormatter.encodeString(hash) + File.separator + "dnd";
+				 					
+				 					download_manager_state.setAttribute( DownloadManagerState.AT_DND_ALT_LOC, dnd_al );
+				 				}
             				}
             			}
             		}
@@ -1644,24 +1691,56 @@ DownloadManagerImpl
 
 	}
 
+	@Override
+	public void 
+	syncGlobalConfig()
+	{
+		readFilePriorityConfig( false, true );
+	}
+	
 	protected void
 	readParameters()
 	{
-		max_connections							= getDownloadState().getIntParameter( DownloadManagerState.PARAM_MAX_PEERS );
-		max_connections_when_seeding_enabled	= getDownloadState().getBooleanParameter( DownloadManagerState.PARAM_MAX_PEERS_WHEN_SEEDING_ENABLED );
-		max_connections_when_seeding			= getDownloadState().getIntParameter( DownloadManagerState.PARAM_MAX_PEERS_WHEN_SEEDING );
-		max_seed_connections					= getDownloadState().getIntParameter( DownloadManagerState.PARAM_MAX_SEEDS );
-		max_uploads						 		= getDownloadState().getIntParameter( DownloadManagerState.PARAM_MAX_UPLOADS );
-		max_uploads_when_seeding_enabled 		= getDownloadState().getBooleanParameter( DownloadManagerState.PARAM_MAX_UPLOADS_WHEN_SEEDING_ENABLED );
-		max_uploads_when_seeding 				= getDownloadState().getIntParameter( DownloadManagerState.PARAM_MAX_UPLOADS_WHEN_SEEDING );
-		max_upload_when_busy_bps				= getDownloadState().getIntParameter( DownloadManagerState.PARAM_MAX_UPLOAD_WHEN_BUSY ) * 1024;
+		DownloadManagerState state = getDownloadState();
+		
+		max_connections							= state.getIntParameter( DownloadManagerState.PARAM_MAX_PEERS );
+		max_connections_when_seeding_enabled	= state.getBooleanParameter( DownloadManagerState.PARAM_MAX_PEERS_WHEN_SEEDING_ENABLED );
+		max_connections_when_seeding			= state.getIntParameter( DownloadManagerState.PARAM_MAX_PEERS_WHEN_SEEDING );
+		max_seed_connections					= state.getIntParameter( DownloadManagerState.PARAM_MAX_SEEDS );
+		max_uploads						 		= state.getIntParameter( DownloadManagerState.PARAM_MAX_UPLOADS );
+		max_uploads_when_seeding_enabled 		= state.getBooleanParameter( DownloadManagerState.PARAM_MAX_UPLOADS_WHEN_SEEDING_ENABLED );
+		max_uploads_when_seeding 				= state.getIntParameter( DownloadManagerState.PARAM_MAX_UPLOADS_WHEN_SEEDING );
+		max_upload_when_busy_bps				= state.getIntParameter( DownloadManagerState.PARAM_MAX_UPLOAD_WHEN_BUSY ) * 1024;
 
 		max_uploads = Math.max( max_uploads, DownloadManagerState.MIN_MAX_UPLOADS );
 		max_uploads_when_seeding = Math.max( max_uploads_when_seeding, DownloadManagerState.MIN_MAX_UPLOADS );
 
-		upload_priority_manual					= getDownloadState().getIntParameter( DownloadManagerState.PARAM_UPLOAD_PRIORITY );
+		upload_priority_manual					= state.getIntParameter( DownloadManagerState.PARAM_UPLOAD_PRIORITY );
 	}
 
+	private void
+	readFilePriorityConfig(
+		boolean		init,
+		boolean		global_change )
+	{
+		int sfp		= getDownloadState().getIntAttribute( DownloadManagerState.AT_SET_FILE_PRIORITY_REM_PIECE );
+		
+		if ( sfp == 0 ){
+			
+			sfp = COConfigurationManager.getIntParameter( ConfigKeys.Transfer.ICFG_SET_FILE_PRIORITY_REM_PIECE );
+		}
+		
+		if ( sfp != set_file_priority_high_pieces_rem ){
+		
+			set_file_priority_high_pieces_rem = sfp;
+			
+			if ( !init ){
+				
+				checkFilePriorities( global_change );
+			}
+		}
+	}
+	
 	protected int[]
 	getMaxConnections( boolean mixed )
 	{
@@ -1784,6 +1863,12 @@ DownloadManagerImpl
 		}
 	}
 
+	protected void
+	rateLimitChanged()
+	{
+		controller.rateLimitChanged();
+	}
+	
 	@Override
 	public int
 	getEffectiveUploadRateLimitBytesPerSecond()
@@ -1888,13 +1973,11 @@ DownloadManagerImpl
 	}
 
 	protected void
-	setFileLinks()
+	fileLinksUpdated()
 	{
 			// invalidate the cache info in case its now wrong
 
 		cached_save_location	= null;
-
-		DiskManagerFactory.setFileLinks( this, download_manager_state.getFileLinks());
 
 		controller.fileInfoChanged();
 	}
@@ -1907,7 +1990,8 @@ DownloadManagerImpl
 
 	private void
 	updateFileLinks(
-		File old_save_path, File new_save_path)
+		File old_save_path, 
+		File new_save_path)
 	{
 		old_save_path = FileUtil.getCanonicalFileSafe( old_save_path );
 		
@@ -1919,34 +2003,49 @@ DownloadManagerImpl
 
 		Iterator<LinkFileMap.Entry> it = links.entryIterator();
 
-		List<Integer>	from_indexes 	= new ArrayList<>();
-		List<File>		from_links 		= new ArrayList<>();
-		List<File>		to_links		= new ArrayList<>();
-
+		List<Integer>	from_indexes 				= new ArrayList<>();
+		List<File>		from_links_may_have_nulls 	= new ArrayList<>();
+		List<File>		to_links					= new ArrayList<>();
+		
 		while(it.hasNext()){
 
 			LinkFileMap.Entry entry = it.next();
 
 			try{
 
-				File	to			= entry.getToFile();
+				StringInterner.FileKey	to_fk	= entry.getToFile();
 
-				if ( to == null ){
+				if ( to_fk == null ){
 
 						// represents a deleted link, nothing to update
 
 					continue;
 				}
 
-				to = FileUtil.getCanonicalFileSafe( to );
+				File to = FileUtil.getCanonicalFileSafe( to_fk.getFile());
 
 				int		file_index 	= entry.getIndex();
-				File	from 		= entry.getFromFile();
+				
+					// preparation for future removal of the "from-file"
+				
+				File from_maybe_null;
+				
+				StringInterner.FileKey	from_fk_maybe_null 		= entry.getFromFileMaybeNull();
 
-				from = FileUtil.getCanonicalFileSafe( from );
+				if ( from_fk_maybe_null == null ){
+					
+					from_maybe_null = null;
+					
+				}else{
+					
+					from_maybe_null = FileUtil.getCanonicalFileSafe( from_fk_maybe_null.getFile());
+				}
 
-				updateFileLink( file_index, old_save_path, new_save_path, from, to, 
-					from_indexes, from_links, to_links );
+				updateFileLink( 
+					file_index, 
+					old_save_path, new_save_path, 
+					from_maybe_null, to, 
+					from_indexes, from_links_may_have_nulls, to_links );
 
 			}catch( Exception e ){
 
@@ -1954,9 +2053,9 @@ DownloadManagerImpl
 			}
 		}
 
-		if ( from_links.size() > 0 ){
+		if ( from_links_may_have_nulls.size() > 0 ){
 
-			download_manager_state.setFileLinks( from_indexes, from_links, to_links );
+			download_manager_state.setFileLinks( from_indexes, from_links_may_have_nulls, to_links );
 		}
 	}
 
@@ -1973,7 +2072,7 @@ DownloadManagerImpl
 		int				file_index,
 		File 			old_path,
 		File 			new_path,
-		File 			from_loc,
+		File 			from_loc_maybe_null,
 		File 			to_loc,
 		List<Integer>	from_indexes,
 		List<File> 		from_links,
@@ -1986,9 +2085,9 @@ DownloadManagerImpl
 
 		if ( torrent.isSimpleTorrent()){
 
-			if (!FileUtil.areFilePathsIdentical(old_path, from_loc)) {
+			if (from_loc_maybe_null != null && !FileUtil.areFilePathsIdentical(old_path, from_loc_maybe_null)) {
 
-				throw new RuntimeException("assert failure: old_path=" + old_path + ", from_loc=" + from_loc);
+				throw new RuntimeException("assert failure: old_path=" + old_path + ", from_loc=" + from_loc_maybe_null);
 			}
 
 			//System.out.println( "   adding " + old_path + " -> null" );
@@ -2024,13 +2123,9 @@ DownloadManagerImpl
 
 		}else{
 
-			String from_loc_to_use = FileUtil.translateMoveFilePath( old_path_str, 
-				new_path_str, from_loc.getAbsolutePath() );
-
-			if ( from_loc_to_use == null ){
-
-				return;
-			}
+			String from_loc_to_use_maybe_null = 
+				from_loc_maybe_null==null?null:FileUtil.translateMoveFilePath( old_path_str, 
+						new_path_str, from_loc_maybe_null.getAbsolutePath() );
 
 			String to_loc_to_use = FileUtil.translateMoveFilePath( old_path_str, 
 				new_path_str, to_loc.getAbsolutePath() );
@@ -2038,13 +2133,13 @@ DownloadManagerImpl
 				// delete old
 
 			from_indexes.add( file_index );
-			from_links.add( from_loc );
+			from_links.add( from_loc_maybe_null );
 			to_links.add( null );
 
 				// add new
 
 			from_indexes.add( file_index );
-			from_links.add( FileUtil.newFile(from_loc_to_use));
+			from_links.add( from_loc_to_use_maybe_null==null?null:FileUtil.newFile(from_loc_to_use_maybe_null));
 			to_links.add( to_loc_to_use == null ? to_loc : FileUtil.newFile(to_loc_to_use));
 		}
 	}
@@ -2052,9 +2147,10 @@ DownloadManagerImpl
 	@Override
 	public boolean
 	filesExist(
-		boolean expected_to_be_allocated )
+		boolean		expected_to_be_allocated,
+		boolean		test_only )
 	{
-		return( controller.filesExist( expected_to_be_allocated ));
+		return( controller.filesExist( expected_to_be_allocated, test_only ));
 	}
 
 
@@ -2321,7 +2417,7 @@ DownloadManagerImpl
 		// If a torrent that is assumed complete, verify that it actually has the
 		// files, before we create the diskManager, which will try to allocate
 		// disk space.
-		if (assumedComplete && !filesExist( true )) {
+		if (assumedComplete && !filesExist( true, false )) {
 			// filesExist() has set state to error for us
 
 			// If the user wants to re-download the missing files, they must
@@ -2855,6 +2951,8 @@ DownloadManagerImpl
     		return;
     	}
     	
+    	int state_before = getState();
+    	
     	boolean paused = pause( true );
     	
     	try{  	  		
@@ -2882,7 +2980,7 @@ DownloadManagerImpl
     		
     		if ( paused ){
     			
-    			resume();
+    			resume( state_before );
     		}
     	}
     }
@@ -2969,7 +3067,12 @@ DownloadManagerImpl
 			
 		} finally {
 
-			download_manager_state.setActive(false);
+			if ( state_after_stopping != STATE_CLOSED ){
+			
+					// closing down, don't bother with this as it can cause the state to be written again
+				
+				download_manager_state.setActive(false);
+			}
 		}
 	}
 
@@ -3077,6 +3180,87 @@ DownloadManagerImpl
 		globalManager.resumeDownload( this );
 	}
 
+	@Override
+	public boolean 
+	resume(
+		int target_state)
+	{
+		resume();
+		
+		if (	target_state != DownloadManager.STATE_DOWNLOADING && 
+				target_state != DownloadManager.STATE_SEEDING ){
+			
+				// sanitize target state 
+			
+			target_state = DownloadManager.STATE_QUEUED;
+		}
+		
+		long quit_at = SystemTime.getMonotonousTime() + 2500;
+			
+		boolean	is_queued = false;
+		
+			// give it some time to get back to where it was
+		
+		while( true ){
+			
+			int current_state = getState();
+			
+			if ( current_state == target_state ){
+				
+				return( true );
+			}
+			
+			long now = SystemTime.getMonotonousTime();
+
+			if ( current_state == DownloadManager.STATE_QUEUED ){
+				
+					// queued can be transitionary so give it a chance to transit
+				
+				if ( !is_queued ){
+					
+					is_queued = true;
+					
+					quit_at = now + 5*1000;
+				}
+			}else{
+				
+				is_queued = false;
+			}
+
+			if ( 	current_state == DownloadManager.STATE_STOPPED || 
+					current_state == DownloadManager.STATE_ERROR ||
+					current_state == DownloadManager.STATE_DOWNLOADING ||
+					current_state == DownloadManager.STATE_SEEDING ){
+
+				// not making any allocation progress or completed
+
+				return( false );
+			}
+								
+			if ( 	current_state == DownloadManager.STATE_ALLOCATING || 
+					current_state == DownloadManager.STATE_CHECKING ){
+			
+					// making progress, hang around
+				
+				quit_at = now + 10*1000;
+			}
+			
+			if ( now > quit_at ){
+				
+				Debug.out( "Gave up waiting for resume target state to be achieved (current=" + current_state + ",target=" + target_state + ")" );
+				
+				return( false );
+			}
+	
+			try{
+				Thread.sleep(100);
+				
+			}catch( Throwable e ){
+				
+			}
+		}
+	}
+	
 	@Override
 	public boolean getAssumedComplete() {
 		return assumedComplete;
@@ -3200,12 +3384,14 @@ DownloadManagerImpl
 		// NOTE: We don't set "stats.setDownloadCompleted(1000)" anymore because
 		//       we can be in seeding mode with an unfinished torrent
 
-		if (position != -1) {
+		if ( position != -1 && globalManager.contains( this )){
+			
 			// we are in a new list, move to the top of the list so that we continue
 			// seeding.
 			// -1 position means it hasn't been added to the global list.  We
 			// shouldn't touch it, since it'll get a position once it's adding is
-			// complete
+			// complete. Also check explicitly that it is known to the global manager
+			// as it is possible to come through here twice during init
 
 			DownloadManager[] dms = { DownloadManagerImpl.this };
 
@@ -3438,7 +3624,7 @@ DownloadManagerImpl
 
  		if ( torrent == null || torrent.isSimpleTorrent()){
 
- 			res = download_manager_state.getFileLink( 0, save_location );
+ 			res = download_manager_state.getFileLink( 0 );
 
  		}else{
 
@@ -3568,7 +3754,7 @@ DownloadManagerImpl
 				}
 			} else if (!response.isValid() && response.getStatus() == TRTrackerScraperResponse.ST_INITIALIZING) {
 				long minNextScrape;
-				// Spread the scrapes out a bit.  This is extremely helpfull on large
+				// Spread the scrapes out a bit.  This is extremely helpful on large
 				// torrent lists, and trackers that do not support multi-scrapes.
 				// For trackers that do support multi-scrapes, it will really delay
 				// the scrape for all torrent in the tracker to the one that has
@@ -4033,6 +4219,59 @@ DownloadManagerImpl
 		}
 	}
 
+	private void
+	checkFilePriorities(
+		boolean	global_change )
+	{
+			// on global change to zero we reset file priorities as user seems to want to disable the default and manually clearing priorities across
+			// all downloads is a pain
+		
+		int sfp_pieces = set_file_priority_high_pieces_rem;
+		
+		if ( global_change || sfp_pieces > 0 ){
+			
+			DiskManager	dm = getDiskManager();
+			
+			if ( dm != null ){
+
+				long sfp_bytes = dm.getPieceLength() * sfp_pieces;
+				
+				DiskManagerFileInfoSet set = getDiskManagerFileInfoSet();
+				
+				DiskManagerFileInfo[] files = set.getFiles();
+				
+				int[]	priorities = null;
+						
+				for ( DiskManagerFileInfo file: files ){
+					
+					long	rem = file.getLength() - file.getDownloaded();
+		    		
+		    		int expected = sfp_bytes==0?0:( rem <= sfp_bytes?1:0);
+		    					    				
+		    		int existing = file.getPriority();
+		    		
+		    		if ( expected != existing && ( existing == 0 || existing == 1 )){
+		    			
+	    				if ( priorities == null ){
+	    					
+	    					priorities = new int[files.length];
+	    					
+	    					Arrays.fill( priorities, Integer.MIN_VALUE );
+	    				}
+	    				
+	    				priorities[file.getIndex()] = expected;
+		    		}
+				}
+				
+				if ( priorities != null ){
+				
+					set.setPriority( priorities );
+				}
+			}
+			
+		}
+	}
+	
 	/**
 	 * Doesn't not inform if state didn't change from last inform call
 	 */
@@ -4064,6 +4303,10 @@ DownloadManagerImpl
 					resume_time = 0;
 				}
 
+				if ( new_state == DownloadManager.STATE_DOWNLOADING ){
+					
+					checkFilePriorities( false );
+				}
 
 				listeners.dispatch( LDT_STATECHANGED, new Object[]{ this, new Integer( new_state )});
 			}
@@ -4142,11 +4385,44 @@ DownloadManagerImpl
 
 	protected void
 	informPriorityChange(
-		DiskManagerFileInfo	file )
+		List<DiskManagerFileInfo>	files )
 	{
-		informPrioritiesChange(Collections.singletonList(file));
+		informPrioritiesChange( files );
 	}
+	
+	protected void
+	informPieceDoneChanged(
+		DiskManagerPiece	piece )
+	{
+		int sfp_pieces = set_file_priority_high_pieces_rem;
+		
+		if ( sfp_pieces > 0 ){
+			
+			DiskManager	dm = getDiskManager();
+			
+			if ( dm != null ){
+					
+				long sfp_bytes = dm.getPieceLength() * sfp_pieces;	// easier to work with bytes and close enough
 
+				DMPieceList list = piece.getPieceList();
+				
+				for ( int i=0; i<list.size(); i++){
+	
+					DMPieceMapEntry entry = list.get( i );
+	
+					DiskManagerFileInfo file = entry.getFile();
+					
+					long	rem = file.getLength() - file.getDownloaded();
+
+		    		if ( rem <= sfp_bytes ){
+    						    			
+		    			file.setPriority( 1 );
+		    		}
+				}
+			}
+		}
+	}
+	
 	protected void
 	informFileCompletionChange(
 		DiskManagerFileInfo	file )
@@ -4906,12 +5182,15 @@ DownloadManagerImpl
 		DownloadManagerState state = getDownloadState();
 
 		DiskManagerFactory.deleteDataFiles(
+			this,
 			torrent,
 			torrent_save_location.getParent(),
 			torrent_save_location.getName(),
 			( 	state.getFlag( DownloadManagerState.FLAG_LOW_NOISE ) ||
 				state.getFlag( DownloadManagerState.FLAG_FORCE_DIRECT_DELETE )));
 
+		deleteDNDAltLoc();
+		
 		// Attempted fix for bug 1572356 - apparently sometimes when we perform removal of a download's data files,
 		// it still somehow gets processed by the move-on-removal rules. I'm making the assumption that this method
 		// is only called when a download is about to be removed.
@@ -4932,10 +5211,14 @@ DownloadManagerImpl
 
 				continue;
 			}
+			
+			int	storage_type = file.getStorageType() ;
+
+			boolean compact = storage_type == DiskManagerFileInfo.ST_COMPACT || storage_type == DiskManagerFileInfo.ST_REORDER_COMPACT;
 
 				// just to be safe...
 
-			if ( file.getDownloaded() == file.getLength()){
+			if ( file.getDownloaded() == file.getLength() && !compact ){
 
 				continue;
 			}
@@ -4943,9 +5226,7 @@ DownloadManagerImpl
 				// user may have switched a partially completed file to DND for some reason - be safe
 				// and only delete compact files
 
-			int	storage_type = file.getStorageType() ;
-
-			if ( storage_type == DiskManagerFileInfo.ST_COMPACT || storage_type == DiskManagerFileInfo.ST_REORDER_COMPACT ){
+			if ( compact ){
 
 				File f = file.getFile( true );
 
@@ -4988,8 +5269,40 @@ DownloadManagerImpl
 				}
 			}
 		}
+		
+		deleteDNDAltLoc();
 	}
 
+	private void
+	deleteDNDAltLoc()
+	{
+		String dnd_al = getDownloadState().getAttribute( DownloadManagerState.AT_DND_ALT_LOC );	
+		
+		if ( dnd_al != null ){
+			
+			File dnd_file = new File( dnd_al );	// loc/hash/dnd
+			
+				// sanity check as we are deleting stuff
+			
+			if ( dnd_file.getName().equals( "dnd" )){
+				
+				File hash_file = dnd_file.getParentFile();
+			
+				if ( hash_file.getName().length() == 40 ){
+					
+					FileUtil.recursiveDelete( dnd_file );
+					
+					File[] rem = hash_file.listFiles();
+					
+					if ( rem != null && rem.length == 0 ){
+						
+						hash_file.delete();
+					}
+				}		
+			}
+		}
+	}
+	
 	protected void
 	deleteTorrentFile()
 	{
@@ -5823,6 +6136,11 @@ DownloadManagerImpl
 
 					  File file_from = file.getFile( true );
 
+					  if ( !file_from.exists() && file.getTorrentFile().isPadFile()){
+						  
+						  continue;
+					  }
+					  
 					  try{
 						  String relativePath = FileUtil.getRelativePath(sl_file, file_from);
 
@@ -7284,7 +7602,7 @@ DownloadManagerImpl
  	  return( dl_identity );
   }
 
-   /** @retun true, if the other DownloadManager has the same hash
+   /** @return true, if the other DownloadManager has the same hash
     * @see java.lang.Object#equals(java.lang.Object)
     */
    public boolean equals(Object obj)
@@ -7388,7 +7706,8 @@ DownloadManagerImpl
 	@Override
 	public void
 	generateEvidence(
-		IndentWriter		writer )
+		IndentWriter		writer,
+		boolean				full )
 	{
 		writer.println(toString());
 
@@ -7397,8 +7716,11 @@ DownloadManagerImpl
 		try {
 			writer.indent();
 
-			writer.println("Save Dir: "
-					+ Debug.secretFileName(getSaveLocation().toString()));
+			if ( full ){
+				writer.println("Save Dir: "	+ getSaveLocation().toString());
+			}else{
+				writer.println("Save Dir: "	+ Debug.secretFileName(getSaveLocation().toString()));
+			}
 
 			if (current_peers.size() > 0) {
 				writer.println("# Peers: " + current_peers.size());
@@ -7438,15 +7760,16 @@ DownloadManagerImpl
 
 			stats.generateEvidence( writer );
 
-			download_manager_state.generateEvidence( writer );
+			download_manager_state.generateEvidence( writer, full );
 
-			if (pm != null) {
-				pm.generateEvidence(writer);
+			if ( pm != null ){
+				
+				pm.generateEvidence( writer );
 			}
 
 				// note, PeerManager generates DiskManager evidence
 
-			controller.generateEvidence(writer);
+			controller.generateEvidence( writer, full );
 
 			TRTrackerAnnouncer announcer = getTrackerClient();
 
@@ -7616,17 +7939,5 @@ DownloadManagerImpl
 		Object	eventData )
 	{
 		globalManager.fireGlobalManagerEvent( eventType, this, eventData );
-	}
-
-	/* (non-Javadoc)
-	 * @see com.biglybt.core.download.DownloadManager#setFilePriorities(com.biglybt.core.disk.DiskManagerFileInfo[], int)
-	 */
-	@Override
-	public void setFilePriorities(DiskManagerFileInfo[] fileInfos, int priority) {
-		// TODO: Insted of looping, which fires off a lot of events,
-		//       do it more directly, and fire needed events once, at end
-		for (DiskManagerFileInfo fileInfo : fileInfos) {
-			fileInfo.setPriority(priority);
-		}
 	}
 }

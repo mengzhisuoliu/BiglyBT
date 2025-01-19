@@ -1917,19 +1917,50 @@ TagManagerImpl
 		}
 	}
 
+	private static final String TTP_TAGS_FOR_TAGGABLE_CACHE = "TagManagerImpl::tags_for_taggable_cache";
+
 	@Override
 	public List<Tag>
 	getTagsForTaggable(
 		Taggable	taggable )
 	{
-		Set<Tag>	result = new HashSet<>();
+		int mut = TagTypeBase.getTagAndTaggableMut();
+		
+		Object[] cache = (Object[])taggable.getTaggableTransientProperty( TTP_TAGS_FOR_TAGGABLE_CACHE );
+		
+		if ( cache != null ){
+			
+			if (((Integer)cache[0]) == mut ){
+				
+				return((List<Tag>)cache[1]);
+			}
+		}
+		
+		List<Tag>	result = null;
 
 		for ( TagType tt: tag_types ){
 
-			result.addAll( tt.getTagsForTaggable( taggable ));
+			List<Tag> tags = tt.getTagsForTaggable( taggable );
+			
+			if ( !tags.isEmpty()){
+			
+				if ( result == null ){
+					
+					result = new ArrayList<>();
+				}
+				
+				result.addAll( tags );
+			}
 		}
 
-		return(new ArrayList<>(result));
+		if ( result == null ){
+		
+			result = Collections.emptyList();
+		}
+		
+		taggable.setTaggableTransientProperty( TTP_TAGS_FOR_TAGGABLE_CACHE, new Object[]{ mut, result });
+		
+		return( result );
 	}
 
 	@Override
@@ -1938,17 +1969,15 @@ TagManagerImpl
 		int			tag_type,
 		Taggable	taggable )
 	{
-		Set<Tag>	result = new HashSet<>();
-
 		for ( TagType tt: tag_types ){
 
 			if ( tt.getTagType() == tag_type ){
 
-				result.addAll( tt.getTagsForTaggable( taggable ));
+				return( tt.getTagsForTaggable( taggable ));
 			}
 		}
 
-		return(new ArrayList<>(result));
+		return( Collections.emptyList());
 	}
 
 	@Override
@@ -1957,24 +1986,36 @@ TagManagerImpl
 		int[]		tts,
 		Taggable	taggable )
 	{
-		Set<Tag>	result = new HashSet<>();
-
-		Set<Integer>	tt_set = new HashSet<>();
+		List<Tag> result = null;
 		
 		for ( int tt: tts ){
-			
-			tt_set.add( tt );
-		}
+
+			TagType tag_type = getTagType( tt );
 		
-		for ( TagType tt: tag_types ){
-
-			if ( tt_set.contains( tt.getTagType())){
-
-				result.addAll( tt.getTagsForTaggable( taggable ));
+			if ( tag_type != null ){
+				
+				List<Tag> temp = tag_type.getTagsForTaggable( taggable );
+				
+				if ( !temp.isEmpty()){
+					
+					if ( result == null ){
+						
+						result = new ArrayList<>();
+					}
+					
+					result.addAll( temp );
+				}
 			}
 		}
 
-		return(new ArrayList<>(result));
+		if ( result == null ){
+			
+			return( Collections.emptyList());
+			
+		}else{
+			
+			return( result );
+		}
 	}
 	
 	@Override
@@ -2576,7 +2617,7 @@ TagManagerImpl
 			return;
 		}
 
-		if ( tag.isRemoved() && type != CU_TAG_REMOVE ){
+		if ( tag.isTagRemoved() && type != CU_TAG_REMOVE ){
 
 			return;
 		}
@@ -2600,7 +2641,7 @@ TagManagerImpl
 			int				type	= (Integer)update[0];
 			TagWithState	tag 	= (TagWithState)update[1];
 
-			if ( tag.isRemoved()){
+			if ( tag.isTagRemoved()){
 
 				type = CU_TAG_REMOVE;
 			}

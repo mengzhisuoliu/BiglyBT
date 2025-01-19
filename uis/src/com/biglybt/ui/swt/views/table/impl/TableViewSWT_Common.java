@@ -680,7 +680,7 @@ public abstract class TableViewSWT_Common
 						if (filter.nextText != null
 								&& (force || !filter.nextText.equals(filter.text))) {
 							filter.text = filter.nextText;
-							filter.checker.filterSet(filter.text);
+							filter.checker.filterSet(filter.text, filter.regex);
 							tv.refilter();
 						}
 					}
@@ -688,7 +688,7 @@ public abstract class TableViewSWT_Common
 	}
 
 	public void runDefaultAction(int stateMask, int origin ) {
-		// Don't allow mutliple run defaults in quick succession
+		// Don't allow multiple run defaults in quick succession
 		if (lastSelectionTriggeredOn > 0
 				&& System.currentTimeMillis() - lastSelectionTriggeredOn < 200) {
 			return;
@@ -937,27 +937,27 @@ public abstract class TableViewSWT_Common
 
 		// Add Plugin Context menus..
 		boolean enable_items = selectedRows.length > 0;
+		boolean needsSeparator = false;
 
 		TableContextMenuItem[] items = TableContextMenuManager.getInstance().getAllAsArray(
 				Utils.getBaseViewID(sMenuID));
 
 		if (items.length > 0 || menu_items.length > 0) {
 			new org.eclipse.swt.widgets.MenuItem(menu, SWT.SEPARATOR);
+			needsSeparator = true;
 
 			// Add download context menu items.
-			if (menu_items != null) {
+			Object[] target;
+			if (isDownloadContext) {
 				// getSelectedDataSources(false) returns us plugin items.
-				Object[] target;
-				if (isDownloadContext) {
-					Object[] dataSources = tv.getSelectedDataSources(false);
-					target = new Download[dataSources.length];
-					System.arraycopy(dataSources, 0, target, 0, target.length);
-				} else {
-					target = selectedRows;
-				}
-				MenuBuildUtils.addPluginMenuItems(menu_items, menu, true, true,
-						new MenuBuildUtils.MenuItemPluginMenuControllerImpl(target));
+				Object[] dataSources = tv.getSelectedDataSources(false);
+				target = new Download[dataSources.length];
+				System.arraycopy(dataSources, 0, target, 0, target.length);
+			} else {
+				target = selectedRows;
 			}
+			MenuBuildUtils.addPluginMenuItems(menu_items, menu, true, true,
+					new MenuBuildUtils.MenuItemPluginMenuControllerImpl(target));
 
 			if (items.length > 0) {
 				MenuBuildUtils.addPluginMenuItems(items, menu, true, enable_items,
@@ -1014,6 +1014,7 @@ public abstract class TableViewSWT_Common
 				TableContextMenuItem[] columnItems = column.getContextMenuItems(TableColumnCore.MENU_STYLE_COLUMN_DATA);
 				if (columnItems.length > 0) {
 					new MenuItem(menu, SWT.SEPARATOR);
+					needsSeparator = true;
 
 					MenuBuildUtils.addPluginMenuItems(
 							columnItems,
@@ -1024,6 +1025,10 @@ public abstract class TableViewSWT_Common
 									tv.getSelectedDataSources(true)));
 
 				}
+			}
+			
+			if (needsSeparator) {
+				new MenuItem(menu, SWT.SEPARATOR);
 			}
 
 			final MenuItem itemSelectAll = new MenuItem(menu, SWT.PUSH);
@@ -1042,6 +1047,22 @@ public abstract class TableViewSWT_Common
 					}
 				});
 			}
+			
+			MenuItem itemRowDetails = new MenuItem(menu, SWT.PUSH);
+			Messages.setLanguageText(itemRowDetails,
+					"MyTorrentsView.menu.row.details");
+
+			itemRowDetails.addListener(SWT.Selection, new Listener() {
+				@Override
+				public void handleEvent(Event e) {
+					TableRowCore focusedRow = tv.getFocusedRow();
+					if (focusedRow == null || focusedRow.isRowDisposed()) {
+						focusedRow = tv.getRow(0);
+					}
+					String tableID = tv.getTableID();
+					new TableRowViewer(tv.getDataSourceType(), tableID, focusedRow );
+				}
+			});
 			
 			MenuItem itemChangeTable = new MenuItem(menu, SWT.PUSH);
 			Messages.setLanguageText(itemChangeTable,
@@ -1064,7 +1085,7 @@ public abstract class TableViewSWT_Common
 		}
 		String tableID = tv.getTableID();
 		new TableColumnSetupWindow(tv.getDataSourceType(), tableID, column, focusedRow,
-				TableStructureEventDispatcher.getInstance(tableID)).open();
+				TableStructureEventDispatcher.getInstance(tableID), false);
 	}
 
 
@@ -1189,24 +1210,50 @@ public abstract class TableViewSWT_Common
 
 			});
 			
+			if ( column.getIconReference() != null ){
+				
+				final MenuItem showIcon = new MenuItem(menu, SWT.CHECK);
+				Messages.setLanguageText(showIcon,
+						"pairing.ui.icon.show");
+
+				showIcon.setSelection( column.getIconReferenceEnabled());
+				
+				showIcon.addListener(SWT.Selection, e -> {
+					column.setIconReferenceEnabled( !column.getIconReferenceEnabled());
+					String tableID = tv.getTableID();
+					TableStructureEventDispatcher.getInstance(
+							tableID).tableStructureChanged(false, null);
+				});
+			}
+				
 			final MenuItem itemPrefSize = new MenuItem(menu, SWT.PUSH);
 			Messages.setLanguageText(itemPrefSize, "table.columns.pref.size");
 			itemPrefSize.addListener(SWT.Selection, e -> Utils.execSWTThread(() -> {
 				column.setPreferredWidth(-1);
 
-				tv.runForAllRows(new TableGroupRowRunner() {
-					@Override
-					public void run(TableRowCore row) {
-						row.fakeRedraw( column.getName());
-					}
-				});
+				int done =
+					tv.runForAllRows(new TableGroupRowRunner() {
+						@Override
+						public void run(TableRowCore row) {
+							row.fakeRedraw( column.getName());
+						}
+					});
 
 				int pref = column.getPreferredWidth();
 
+				if ( done == 0 ){
+					
+					pref = Math.max( column.getMinWidth(), column.getPreferredHeaderWidth());
+				}
+				
 				if ( pref != -1 ){
 
 					column.setWidth( pref );
 				}
+				
+					// we need this to avoid scroll bars getting confused for some reason...
+				
+				TableStructureEventDispatcher.getInstance(tv.getTableID()).tableStructureChanged(false, null);
 			}));
 
 			new MenuItem(menu, SWT.SEPARATOR);
@@ -1216,7 +1263,7 @@ public abstract class TableViewSWT_Common
 			menuHideColumn.addListener(SWT.Selection,
 					e -> TableColumnSWTUtils.changeColumnVisiblity(tv, column, false));
 		}
-
+		
 		final MenuItem itemResetColumns = new MenuItem(menu, SWT.PUSH);
 		Messages.setLanguageText(itemResetColumns, "table.columns.reset");
 		itemResetColumns.addListener(SWT.Selection, new Listener() {
@@ -1243,6 +1290,12 @@ public abstract class TableViewSWT_Common
 						}
 					}});
 			}
+		});
+
+		final MenuItem itemSelectAll = new MenuItem(menu, SWT.PUSH);
+		Messages.setLanguageText(itemSelectAll, "Button.selectAll");
+		itemSelectAll.addListener(SWT.Selection, (ev)->{
+			tv.selectAll();
 		});
 
 		final MenuItem itemChangeTable = new MenuItem(menu, SWT.PUSH);

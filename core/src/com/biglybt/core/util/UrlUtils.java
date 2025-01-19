@@ -1121,15 +1121,17 @@ public class UrlUtils
 
 						// accept raw hash of 32 base-32 chars, with garbage around it
 				
+					String garbageText = "-" + text + "-";	// add extra garbage...
+					
 					Pattern pattern = Pattern.compile("[^a-zA-Z2-7]([a-zA-Z2-7]{" + b32_len + "})[^a-zA-Z2-7]");
-					Matcher matcher = pattern.matcher(text);
+					Matcher matcher = pattern.matcher(garbageText);
 					if (matcher.find()) {
 						String infohash = matcher.group(1);
 						return( getMagnetURI(Base32.decode(infohash)));
 					}
 		
 					pattern = Pattern.compile("[^a-fA-F0-9]([a-fA-F0-9]{" + hex_len + "})[^a-fA-F0-9]");
-					matcher = pattern.matcher(text);
+					matcher = pattern.matcher(garbageText);
 					if (matcher.find()) {
 						String hash = matcher.group(1);
 						// convert from HEX to raw bytes
@@ -1252,20 +1254,22 @@ public class UrlUtils
 			
 			// accept raw hash of 32 base-32 chars, with garbage around it
 			
+			String garbageText = "-" + text + "-";	// add extra garbage...
+
 			for ( int i=0;i<2;i++){
 				
 				int hex_len = i==0?40:64;		// sha1/sha256
 				int b32_len	= i==0?32:52;		// sha1/sha256
 	
 				pattern = Pattern.compile("[^a-zA-Z2-7]([a-zA-Z2-7]{" + b32_len + "})[^a-zA-Z2-7]");
-				matcher = pattern.matcher(text);
+				matcher = pattern.matcher(garbageText);
 				if (matcher.find()) {
 					String hash = matcher.group(1);
 					return( getMagnetURI(Base32.decode(hash)));
 				}
 	
 				pattern = Pattern.compile("[^a-fA-F0-9]([a-fA-F0-9]{" + hex_len + "})[^a-fA-F0-9]");
-				matcher = pattern.matcher(text);
+				matcher = pattern.matcher(garbageText);
 				if (matcher.find()) {
 					String hash = matcher.group(1);
 					// convert from HEX to raw bytes
@@ -1458,19 +1462,23 @@ public class UrlUtils
 	public static String
 	resolveIPv6Host(
 		String		url )
+	
+		throws Exception
 	{
+		String str = url;
+		
 		try{
 			DNSUtils.DNSUtilsIntf dns_utils = DNSUtils.getSingleton();
-
+	
 			URL http_server_url = new URL( url );
-
+	
+			str = http_server_url.getHost();
+			
 			return( setHost( http_server_url, "[" + dns_utils.getIPV6ByName( http_server_url.getHost()).getHostAddress() + "]").toExternalForm());
 			
 		}catch( Throwable e ){
 			
-			Debug.out( e );
-			
-			return( url );
+			throw( new Exception( "Failed to resolve IPv6 address for '" + str + "'"));
 		}
 	}
 	

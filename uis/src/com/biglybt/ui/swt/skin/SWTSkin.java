@@ -719,9 +719,6 @@ public class SWTSkin
 
 		int width = skinProperties.getPxValue(startID + ".width", -1);
 		int height = skinProperties.getPxValue(startID + ".height", -1);
-		if (skinComposite instanceof AEShell) {
-			((AEShell) skinComposite).setAdjustPXforDPI(false);
-		}
 
 		if (autoSizeOnLayout) {
 			if (width > 0 && height == -1) {
@@ -1074,7 +1071,7 @@ public class SWTSkin
 		// XXX This could get ugly, we should could the # of
 		//     SWTSkinPropertiesParam to determine if this needs optimizing
 		//     ie. if a top container has paramValues, every child will get a new
-		//         object.  How would this affect memory/performace?
+		//         object.  How would this affect memory/performance?
 		if (paramValues != null) {
 			properties = new SWTSkinPropertiesParamImpl(properties, paramValues);
 		}
@@ -1898,7 +1895,7 @@ public class SWTSkin
 			// XXX This could get ugly, we should could the # of
 			//     SWTSkinPropertiesParam to determine if this needs optimizing
 			//     ie. if a top container has paramValues, every child will get a new
-			//         object.  How would this affect memory/performace?
+			//         object.  How would this affect memory/performance?
 			if (paramValues != null) {
 				properties = new SWTSkinPropertiesParamImpl(properties, paramValues);
 			}

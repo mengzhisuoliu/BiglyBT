@@ -241,6 +241,30 @@ TRTrackerBTAnnouncerImpl
 								final private int	public_pending	= tracker_timer_public.getEventCount( SystemTime.getCurrentTime());
 								final private int	private_pending	= tracker_timer_private.getEventCount( SystemTime.getCurrentTime() );
 								
+								final List<String>	public_active;
+								final List<String>	private_active;
+								
+								{
+									List<TimerEvent> events = tracker_timer_public.getActiveEvents();
+									
+									long mono_now = SystemTime.getMonotonousTime();
+									
+									public_active = new ArrayList<String>( events.size());
+									
+									for ( TimerEvent e: events ){
+																				
+										public_active.add( e.getName() + " (" + (mono_now - e.getExecutionStartMonoTime()) + " " + MessageText.getString( "ConfigView.section.stats.millis.short" ) + ")");									}
+									
+									events = tracker_timer_private.getActiveEvents();
+									
+									private_active = new ArrayList<String>( events.size());
+									
+									for ( TimerEvent e: events ){
+										
+										private_active.add( e.getName() + " (" + (mono_now - e.getExecutionStartMonoTime()) + " " + MessageText.getString( "ConfigView.section.stats.millis.short" ) + ")");						
+									}
+								}
+								
 								public long
 								getPublicLagMillis()
 								{
@@ -251,6 +275,20 @@ TRTrackerBTAnnouncerImpl
 								getPrivateLagMillis()
 								{
 									return( private_lag );
+								}
+								
+								@Override
+								public List<String> 
+								getPublicActive()
+								{
+									return( public_active );
+								}
+								
+								@Override
+								public List<String> 
+								getPrivateActive()
+								{	
+									return( private_active );
 								}
 								
 								public int
@@ -359,6 +397,7 @@ TRTrackerBTAnnouncerImpl
 	private long				current_time_to_wait_secs;
 	private final boolean		manual_control;
 
+	private final int	dispersal_random = RandomUtils.nextInt( 10 );
 	private long		tracker_interval;
 	private long		tracker_min_interval;
 
@@ -403,6 +442,7 @@ TRTrackerBTAnnouncerImpl
 	private byte autoUDPprobeEvery = 1;
 	private int autoUDPProbeSuccessCount;
 
+	private InetSocketAddress working_udp_ia;
 
 	private String tracker_id = "";
 
@@ -504,7 +544,7 @@ TRTrackerBTAnnouncerImpl
 			{
 				if ( manual_control ){
 
-					requestUpdateSupport();
+					requestUpdateSupport( this_event );
 
 					return;
 				}
@@ -513,7 +553,7 @@ TRTrackerBTAnnouncerImpl
 
 				try{
 
-					secs_to_wait = requestUpdateSupport();
+					secs_to_wait = requestUpdateSupport( this_event );
 
 					if ( tracker_state != TRTrackerAnnouncer.TS_STOPPED ){
 						
@@ -696,6 +736,8 @@ TRTrackerBTAnnouncerImpl
 
 		}
 
+		secs_to_wait += dispersal_random;
+		
 		return( secs_to_wait );
 	}
 
@@ -931,7 +973,8 @@ TRTrackerBTAnnouncerImpl
 	}
 
 	protected long
-	requestUpdateSupport()
+	requestUpdateSupport(
+		TimerEvent		timer_event )
 	{
 
 		boolean	clear_progress = true;
@@ -975,7 +1018,7 @@ TRTrackerBTAnnouncerImpl
 
 				}else if ( tracker_state != TRTrackerAnnouncer.TS_STOPPED ){
 
-					response = stopSupport();
+					response = stopSupport( timer_event );
 
 					if ( response.getStatus() == TRTrackerAnnouncerResponse.ST_ONLINE ){
 
@@ -994,7 +1037,7 @@ TRTrackerBTAnnouncerImpl
 					// always go through the "start" phase, even if we're already complete
 					// as some trackers insist on the initial "start"
 
-				response = startSupport();
+				response = startSupport( timer_event );
 
 				if ( response.getStatus() == TRTrackerAnnouncerResponse.ST_ONLINE ){
 
@@ -1004,7 +1047,7 @@ TRTrackerBTAnnouncerImpl
 
 				if ( !complete_reported ){
 
-					response = completeSupport();
+					response = completeSupport( timer_event );
 
 						// treat the "complete" as processed if the tracker replies either OK or an explicit
 						// error. In particular, if the tracker has returned an error to control seed limits
@@ -1020,12 +1063,12 @@ TRTrackerBTAnnouncerImpl
 				}else{
 					tracker_state = TRTrackerAnnouncer.TS_COMPLETED;
 
-					response = updateSupport();
+					response = updateSupport( timer_event );
 				}
 
 			}else{
 
-				response = updateSupport();
+				response = updateSupport( timer_event );
 			}
 
 			if ( response != null ){
@@ -1111,45 +1154,46 @@ TRTrackerBTAnnouncerImpl
 		}
 	}
 
-	protected TRTrackerAnnouncerResponseImpl startSupport() {
+	protected TRTrackerAnnouncerResponseImpl startSupport( TimerEvent timer_event ) {
 		if (Logger.isEnabled())
 			Logger.log(new LogEvent(torrent, LOGID, "Tracker Announcer is sending "
 					+ "a start Request"));
 
-    return (update("started"));
+    return (update("started", timer_event ));
   }
 
-  protected TRTrackerAnnouncerResponseImpl completeSupport() {
+  protected TRTrackerAnnouncerResponseImpl completeSupport( TimerEvent timer_event ) {
   	if (Logger.isEnabled())
 			Logger.log(new LogEvent(torrent, LOGID, "Tracker Announcer is sending "
 					+ "a completed Request"));
 
-		return (update("completed"));
+		return (update("completed", timer_event));
   }
 
-  protected TRTrackerAnnouncerResponseImpl stopSupport() {
+  protected TRTrackerAnnouncerResponseImpl stopSupport( TimerEvent timer_event ) {
   	if (Logger.isEnabled())
 			Logger.log(new LogEvent(torrent, LOGID, "Tracker Announcer is sending "
 					+ "a stopped Request"));
 
-    return (update("stopped"));
+    return (update("stopped", timer_event));
   }
 
-  protected TRTrackerAnnouncerResponseImpl updateSupport() {
+  protected TRTrackerAnnouncerResponseImpl updateSupport( TimerEvent timer_event ) {
   	if (Logger.isEnabled())
 			Logger.log(new LogEvent(torrent, LOGID, "Tracker Announcer is sending "
 					+ "an update Request"));
 
-    return update("");
+    return update("", timer_event);
   }
 
   	private TRTrackerAnnouncerResponseImpl
 	update(
-		String evt )
+		String 		evt,
+		TimerEvent	timer_event )
   	{
   		// this method filters out any responses incompatible with the network selection
 
-  		TRTrackerAnnouncerResponseImpl	resp = update2( evt );
+  		TRTrackerAnnouncerResponseImpl	resp = update2( evt, timer_event );
 
   		TRTrackerAnnouncerResponsePeer[]	peers = resp.getPeers();
 
@@ -1202,9 +1246,9 @@ TRTrackerBTAnnouncerImpl
   	}
 
     private TRTrackerAnnouncerResponseImpl
-    update2(String evt)
+    update2(String evt, TimerEvent timer_event )
     {
-    	TRTrackerAnnouncerResponseImpl resp = update2Support( evt );
+    	TRTrackerAnnouncerResponseImpl resp = update2Support( evt, timer_event );
     
     	URL url = resp.getURL();
     	
@@ -1217,7 +1261,7 @@ TRTrackerBTAnnouncerImpl
     }
     
   private TRTrackerAnnouncerResponseImpl
-  update2Support(String evt)
+  update2Support(String evt, TimerEvent event )
   {
   	TRTrackerAnnouncerResponseImpl	last_failure_resp = null;
 
@@ -1266,7 +1310,7 @@ TRTrackerBTAnnouncerImpl
 		  
 		  try{
 
-			request_obj =  constructRequest( evt,original_url );
+			request_obj =  constructRequest( evt, original_url, event );
 			
 			all_trackers.addActiveRequest( request_obj );
 			
@@ -2084,12 +2128,38 @@ TRTrackerBTAnnouncerImpl
 
  			int handler_port = UDPNetworkManager.getSingleton().getUDPNonDataListeningPortNumber();
  			
+ 			int retries = PRUDPPacketTracker.DEFAULT_RETRY_COUNT;
+ 			
  			List<InetSocketAddress>	url_addresses = UrlUtils.getURLAddresses( reqUrl );
+ 			
+ 			if ( url_addresses.size() > 1 ){
+ 				
+ 				Collections.shuffle(url_addresses);
+ 				
+ 				if ( working_udp_ia != null ){
+ 					
+ 					if ( url_addresses.remove( working_udp_ia )){
+ 						
+ 						url_addresses.add( 0, working_udp_ia );
+ 					}
+ 				}
+ 			}
  			
  			Throwable last_error = null;
  			
+ 			boolean all_skipped = true;
+ 			
+ 			boolean ipv6_enabled =  NetworkAdmin.getSingleton().isIPV6Enabled();
+ 			
  			for ( InetSocketAddress destination: url_addresses ){
  			
+ 				if ( destination.getAddress() instanceof Inet6Address && !ipv6_enabled ){
+ 					
+ 					continue;
+ 				}
+ 				
+ 				all_skipped = false;
+ 				
  				try{
 	 	 			PRUDPPacketHandler handler = PRUDPPacketHandlerFactory.getHandler( handler_port );
 	
@@ -2097,7 +2167,7 @@ TRTrackerBTAnnouncerImpl
 	
 		 			try{
 		
-			 			for (int retry_loop=0;retry_loop<PRUDPPacketTracker.DEFAULT_RETRY_COUNT;retry_loop++){
+			 			for (int retry_loop=0;retry_loop<retries;retry_loop++){
 		
 			 				try{
 		
@@ -2259,6 +2329,8 @@ TRTrackerBTAnnouncerImpl
 		
 						 					message.write( data );
 		
+						 					working_udp_ia = destination;
+						 					
 						 					return( null );
 		
 					 					}
@@ -2315,6 +2387,8 @@ TRTrackerBTAnnouncerImpl
 		
 					 					message.write( data );
 		
+					 					working_udp_ia = destination;
+
 					 					return( null );
 		
 					 				}
@@ -2341,7 +2415,15 @@ TRTrackerBTAnnouncerImpl
  				}catch( Throwable e){
  					
  					last_error = e;
+ 					
+ 					retries	= 1;
+ 					timeout = 10*1000;	// if we have lots of addresses we don't want to be wasting loads of time
  				}
+ 			}
+ 			
+ 			if ( all_skipped ){
+ 				
+ 				throw( new Exception( "IPv6 disabled" ));
  			}
  			
  			if ( last_error != null ){
@@ -2459,8 +2541,9 @@ TRTrackerBTAnnouncerImpl
 
   private TRTrackerAnnouncerRequestImpl
   constructRequest(
-  	String 	evt,
-	URL		_url)
+  	String 		evt,
+	URL			_url,
+	TimerEvent	timer_event )
 
   	throws Exception
   {
@@ -2489,6 +2572,11 @@ TRTrackerBTAnnouncerImpl
   	
   	if ( att != null ){
   
+  		if ( timer_event != null ){
+  		
+  			timer_event.setName( att.getTrackerName());
+  		}
+  		
   		Map<String,Object>	options = att.getOptions();
   		
   		if ( options != null ){
@@ -2989,7 +3077,7 @@ TRTrackerBTAnnouncerImpl
 
 				URL url = torrent.getAnnounceURL();
 
-					//We then contruct a list of one element, containing this url, and put this list
+					//We then construct a list of one element, containing this url, and put this list
 					//into the list of lists of urls.
 
 				List<URL> list = new ArrayList();

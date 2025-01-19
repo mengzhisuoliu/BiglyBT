@@ -121,7 +121,7 @@ public class MyTorrentsView
                   TableSelectionListener,
                   TableViewSWTMenuFillListener,
                   TableRefreshListener,
-                  TableViewFilterCheck.TableViewFilterCheckEx<DownloadManager>,
+                  TableViewFilterCheck<DownloadManager>,
                   TableRowRefreshListener,
                   TableCountChangeListener,
                   TableExpansionChangeListener,
@@ -236,8 +236,8 @@ public class MyTorrentsView
 		this.supportsTabs = supportsTabs;
 	}
 
-	public MyTorrentsView(String propertiesPrefix, boolean supportsTabs) {
-		super(propertiesPrefix);
+	public MyTorrentsView(String textPrefixID, boolean supportsTabs) {
+		super(textPrefixID);
 		this.supportsTabs = supportsTabs;
 	}
 
@@ -259,7 +259,14 @@ public class MyTorrentsView
   {
 		super("MyTorrentsView");
 		this.filterBox = filterBox;
-		filterBox.setTooltip(MessageText.getString("MyTorrentsView.filter.tooltip"));
+		
+		String tooltip = MessageText.getString("MyTorrentsView.filter.tooltip");
+		
+		if ( Utils.getUserMode() > 0 ){
+			tooltip += "\n" + MessageText.getString( "search.tt.tag.constraint" );
+		}
+		
+		filterBox.setTooltip(tooltip);
 		this.supportsTabs = supportsTabs;
 		init(core, tableID, isSeedingView
 				? DownloadTypeComplete.class : DownloadTypeIncomplete.class, basicItems);
@@ -1840,6 +1847,11 @@ public class MyTorrentsView
 		updateSelectedContent();
 		refreshTorrentMenu();
 	}
+	
+	@Override
+	public void focusRequested(){
+		viewActive = true;
+	}
 
 	// @see TableSelectionListener#mouseEnter(TableRowCore)
 	@Override
@@ -1890,7 +1902,7 @@ public class MyTorrentsView
 		}
 			// if we're not active then ignore this update as we don't want invisible components
 			// updating the toolbar with their invisible selection. Note that unfortunately the
-			// call we get here when activating a view does't yet have focus
+			// call we get here when activating a view doesn't yet have focus
 
 		if ( !isTableFocus()){
 			if ( !force ){
@@ -2643,7 +2655,7 @@ public class MyTorrentsView
 		}
 
 		if (e.keyCode == SWT.F2 && (e.stateMask & SWT.MODIFIER_MASK) == 0) {
-			FilesViewMenuUtil.rename(tv, tv.getSelectedDataSources(true), null, true, false,false);
+			FilesViewMenuUtil.rename(tv, tv.getSelectedDataSources(true), null, true, false, false, false );
 			e.doit = false;
 			return;
 		}
@@ -2984,27 +2996,35 @@ public class MyTorrentsView
 		// Usually get stateChanged trigger for every torrent on first display
 		// Queue them up, otherwise ThreadPool warns of too many
 		synchronized (listRowsToRefresh) {
-			if (!listRowsToRefresh.contains(row)) {
-				listRowsToRefresh.add(row);
-				if (listRowsToRefresh.size() > 1) {
-					return;
-				}
+			if (listRowsToRefresh.contains(row)) {
+				return;
+			}
+			listRowsToRefresh.add(row);
+			if (listRowsToRefresh.size() > 1) {
+				return;
 			}
 		}
 
 		Utils.getOffOfSWTThread(() -> {
 			// wait between 10ms and 50ms for new state changes
-			int count = listRowsToRefresh.size();
+			int count;
+			
+			synchronized (listRowsToRefresh) {
+				count = listRowsToRefresh.size();
+			}
+			
 			for (int i = 0; i < 5; i++) {
 				try {
 					Thread.sleep(10);
 				} catch (InterruptedException e) {
 				}
-				int newCount = listRowsToRefresh.size();
-				if (newCount == count) {
-					break;
+				synchronized (listRowsToRefresh) {
+					int newCount = listRowsToRefresh.size();
+					if (newCount == count) {
+						break;
+					}
+					count = newCount;
 				}
-				count = newCount;
 			}
 
 			TableRowCore[] rows;
@@ -3627,7 +3647,10 @@ public class MyTorrentsView
 	@Override
 	public void updateLanguage() {
 		super.updateLanguage();
-		getComposite().layout(true, true);
+		Composite comp = getComposite();
+		if ( comp != null ){
+			comp.layout(true, true);
+		}
 	}
 
 	public boolean isTableFocus() {
@@ -3658,7 +3681,7 @@ public class MyTorrentsView
 		int tableExtraStyle = COConfigurationManager.getIntParameter("MyTorrentsView.table.style");
 		TableViewSWT<DownloadManager> table =
 			TableViewFactory.createTableViewSWT(forDataSourceType, tableID,
-				getPropertiesPrefix(), basicItems, "#", tableExtraStyle | SWT.MULTI
+				getTextPrefixID(), basicItems, "#", tableExtraStyle | SWT.MULTI
 						| SWT.FULL_SELECTION | SWT.VIRTUAL | SWT.CASCADE);
 
 			// config??
@@ -3759,9 +3782,16 @@ public class MyTorrentsView
 				&& !dm.getTorrent().isSimpleTorrent() && rowCore.isVisible()
 				&& dm.getNumFileInfos() > 0) {
 			
-			DiskManagerFileInfo[] files = getVisibleFiles( dm );
-			if ( files != null ){			
-				rowCore.setSubItems(files);
+			Long lastSet = (Long)row.getData( "mtv:rowsubsset" );
+			
+			if ( lastSet == null ){
+				
+				row.setData( "mtv:rowsubsset", SystemTime.getMonotonousTime());
+				
+				DiskManagerFileInfo[] files = getVisibleFiles( dm );
+				if ( files != null ){			
+					rowCore.setSubItems(files);
+				}
 			}
 		}
 	}

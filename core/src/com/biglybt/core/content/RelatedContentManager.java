@@ -23,6 +23,7 @@ package com.biglybt.core.content;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.lang.ref.Reference;
 import java.lang.ref.WeakReference;
 import java.net.URL;
 import java.util.*;
@@ -78,7 +79,7 @@ RelatedContentManager
 	public static final int RCM_SEARCH_PROPERTY_NETWORKS		= 50004;
 
 	private static final boolean 	TRACE 			= false;
-
+	
 	private static final int		MAX_HISTORY					= 16;
 	private static final int		MAX_TITLE_LENGTH			= 80;
 	private static final int		MAX_CONCURRENT_PUBLISH;
@@ -189,9 +190,11 @@ RelatedContentManager
 	private PluginInterface 				plugin_interface;
 	private TorrentAttribute 				ta_networks;
 	private TorrentAttribute 				ta_category;
-	private DHTPluginInterface				public_dht_plugin;
+	
+	private DHTPluginBasicInterface			public_dht_plugin;
+	private DHTPluginBasicInterface			public_dht_plugin_bigly;
 
-	private volatile Map<Byte,DHTPluginInterface>		i2p_dht_plugin_map = new HashMap<>();
+	private volatile Map<Byte,DHTPluginBasicInterface>		i2p_dht_plugin_map = new HashMap<>();
 
 	private TagManager						tag_manager;
 
@@ -209,6 +212,8 @@ RelatedContentManager
 
 	private final boolean	enabled;
 
+	private boolean	use_bigly_dht_for_public_lookups;
+	
 	private int		max_search_level;
 	private int		max_results;
 
@@ -240,9 +245,11 @@ RelatedContentManager
 	boolean	secondary_lookup_in_progress;
 	long	secondary_lookup_complete_time;
 
-	RCMSearchXFer			transfer_type = new RCMSearchXFer();
+	RCMSearchXFer			main_transfer_type	= new RCMSearchXFer();
+	RCMSearchXFerBiglyBT	bigly_transfer_type = new RCMSearchXFerBiglyBT();
 
 	final 	CopyOnWriteList<RelatedContentSearcher>	searchers = new CopyOnWriteList<>();
+
 	private boolean	added_i2p_searcher;
 	private RelatedContentSearcher	mix_searcher;
 
@@ -293,6 +300,7 @@ RelatedContentManager
 					"rcm.max_search_level",
 					"rcm.max_results",
 					"rcm.global.filter.active_only",
+					"rcm.use.bigly.dht",
 				},
 				new ParameterListener()
 				{
@@ -301,6 +309,8 @@ RelatedContentManager
 					parameterChanged(
 						String name )
 					{
+						use_bigly_dht_for_public_lookups = COConfigurationManager.getBooleanParameter( "rcm.use.bigly.dht", false );
+						
 						max_search_level 	= COConfigurationManager.getIntParameter( "rcm.max_search_level", 3 );
 						max_results		 	= COConfigurationManager.getIntParameter( "rcm.max_results", 500 );
 						
@@ -388,115 +398,128 @@ RelatedContentManager
 				public void
 				initializationComplete()
 				{
-					if ( !persist ){
+					AEThread2.createAndStartDaemon( 
+						"rcm.delay.init",
+						()->{
+							try{
+								if ( !persist ){
+									
+									deleteRelatedContent();
+								}
 
-						deleteRelatedContent();
-					}
-
-					try{
-						PluginInterface dht_pi =
-							plugin_interface.getPluginManager().getPluginInterfaceByClass(
-										DHTPlugin.class );
-
-						if ( dht_pi != null ){
-
-							DHTPlugin dp = (DHTPlugin)dht_pi.getPlugin();
-
-							public_dht_plugin = dp;
-
-							RelatedContentSearcher public_searcher = new RelatedContentSearcher( RelatedContentManager.this, transfer_type, dp, true );
-
-							searchers.add( public_searcher );
-
-							DownloadManager dm = plugin_interface.getDownloadManager();
-
-							Download[] downloads = dm.getDownloads();
-
-							addDownloads( downloads, true );
-
-							dm.addListener(
-								new DownloadManagerListener()
-								{
-									@Override
-									public void
-									downloadAdded(
-										Download	download )
-									{
-										addDownloads( new Download[]{ download }, false );
+								PluginInterface dht_pi =
+									plugin_interface.getPluginManager().getPluginInterfaceByClass(
+												DHTPlugin.class );
+		
+								if ( dht_pi != null ){
+		
+									DHTPlugin dp = (DHTPlugin)dht_pi.getPlugin();
+		
+									public_dht_plugin = dp;
+																														
+									RelatedContentSearcher public_searcher = new RelatedContentSearcher( RelatedContentManager.this, main_transfer_type, public_dht_plugin, true );
+															
+									searchers.add( public_searcher );
+		
+									if ( dp.isEnabled()){
+										
+										public_dht_plugin_bigly = dp.getDHTPlugin( DHTPlugin.NW_BIGLYBT_MAIN );
+											
+										RelatedContentSearcher bigly_searcher = new RelatedContentSearcher( RelatedContentManager.this, bigly_transfer_type, public_dht_plugin_bigly, true );
+										
+										searchers.add( bigly_searcher );
 									}
-
-									@Override
-									public void
-									downloadRemoved(
-										Download	download )
-									{
-									}
-								},
-								false );
-
-							SimpleTimer.addPeriodicEvent(
-								"RCM:publisher",
-								TIMER_PERIOD,
-								new TimerEventPerformer()
-								{
-									private int	tick_count;
-
-									@Override
-									public void
-									perform(
-										TimerEvent event )
-									{
-										tick_count++;
-
-										if ( tick_count == 1 || tick_count % I2P_SEARCHER_CHECK_TICKS == 0 ){
-
-											checkI2PSearcher( false );
-										}
-
-										if ( enabled ){
-
-											if ( tick_count >= INITIAL_PUBLISH_TICKS ){
-
-												if ( tick_count % ( public_dht_plugin.isSleeping()?PUBLISH_SLEEPING_CHECK_TICKS:PUBLISH_CHECK_TICKS) == 0 ){
-
-													publish();
+		
+									DownloadManager dm = plugin_interface.getDownloadManager();
+		
+									Download[] downloads = dm.getDownloads();
+		
+									addDownloads( downloads, true );
+		
+									dm.addListener(
+										new DownloadManagerListener()
+										{
+											@Override
+											public void
+											downloadAdded(
+												Download	download )
+											{
+												addDownloads( new Download[]{ download }, false );
+											}
+		
+											@Override
+											public void
+											downloadRemoved(
+												Download	download )
+											{
+											}
+										},
+										false );
+		
+									SimpleTimer.addPeriodicEvent(
+										"RCM:publisher",
+										TIMER_PERIOD,
+										new TimerEventPerformer()
+										{
+											private int	tick_count;
+		
+											@Override
+											public void
+											perform(
+												TimerEvent event )
+											{
+												tick_count++;
+		
+												if ( tick_count == 1 || tick_count % I2P_SEARCHER_CHECK_TICKS == 0 ){
+		
+													checkI2PSearcher( false );
 												}
-
-												if ( tick_count % SECONDARY_LOOKUP_TICKS == 0 ){
-
-													secondaryLookup();
+		
+												if ( enabled ){
+		
+													if ( tick_count >= INITIAL_PUBLISH_TICKS ){
+		
+														if ( tick_count % ( public_dht_plugin.isSleeping()?PUBLISH_SLEEPING_CHECK_TICKS:PUBLISH_CHECK_TICKS) == 0 ){
+		
+															publish();
+														}
+		
+														if ( tick_count % SECONDARY_LOOKUP_TICKS == 0 ){
+		
+															secondaryLookup();
+														}
+		
+														if ( tick_count % REPUBLISH_TICKS == 0 ){
+		
+															republish();
+														}
+		
+														if ( tick_count % CONFIG_SAVE_CHECK_TICKS == 0 ){
+		
+															saveRelatedContent( tick_count, false );
+														}
+													}
 												}
-
-												if ( tick_count % REPUBLISH_TICKS == 0 ){
-
-													republish();
-												}
-
-												if ( tick_count % CONFIG_SAVE_CHECK_TICKS == 0 ){
-
-													saveRelatedContent( tick_count );
+		
+												for ( RelatedContentSearcher searcher: searchers ){
+		
+													searcher.timerTick( enabled, tick_count );
 												}
 											}
-										}
-
-										for ( RelatedContentSearcher searcher: searchers ){
-
-											searcher.timerTick( enabled, tick_count );
-										}
-									}
-								});
-						}
-					}finally{
-
-						initialisation_complete_sem.releaseForever();
-					}
+										});
+								}
+							}finally{
+		
+								initialisation_complete_sem.releaseForever();
+							}
+						});
 				}
 
 				@Override
 				public void
 				closedownInitiated()
 				{
-					saveRelatedContent( 0 );
+					saveRelatedContent( 0, true );
 				}
 
 				@Override
@@ -552,9 +575,9 @@ RelatedContentManager
 
 				if ( ddb.getNetwork() == AENetworkClassifier.AT_I2P ){
 
-					DHTPluginInterface i2p_dht = ddb.getDHTPlugin();
+					DHTPluginBasicInterface i2p_dht = ddb.getDHTPlugin();
 
-					RelatedContentSearcher i2p_searcher = new RelatedContentSearcher( RelatedContentManager.this, transfer_type, i2p_dht, false );
+					RelatedContentSearcher i2p_searcher = new RelatedContentSearcher( RelatedContentManager.this, main_transfer_type, i2p_dht, false );
 
 					searchers.add( i2p_searcher );
 
@@ -578,9 +601,9 @@ RelatedContentManager
 	
 					if ( ddb.getNetwork() == AENetworkClassifier.AT_I2P ){
 	
-						DHTPluginInterface i2p_mix_dht = ddb.getDHTPlugin();
+						DHTPluginBasicInterface i2p_mix_dht = ddb.getDHTPlugin();
 	
-						mix_searcher = new RelatedContentSearcher( RelatedContentManager.this, transfer_type, i2p_mix_dht, false );
+						mix_searcher = new RelatedContentSearcher( RelatedContentManager.this, main_transfer_type, i2p_mix_dht, false );
 					}
 				}
 			}
@@ -594,6 +617,19 @@ RelatedContentManager
 	isEnabled()
 	{
 		return( enabled );
+	}
+	
+	public boolean
+	getUseBiglyDHTForPublicLookups()
+	{
+		return( use_bigly_dht_for_public_lookups );
+	}
+
+	public void
+	setUseBiglyDHTForPublicLookups(
+		boolean		b )
+	{
+		COConfigurationManager.setParameter( "rcm.use.bigly.dht", b );
 	}
 
 	public int
@@ -641,18 +677,25 @@ RelatedContentManager
 		
 
 
-	private DHTPluginInterface
+	private DHTPluginBasicInterface
 	selectDHT(
-		byte		networks )
+		byte		networks,
+		boolean		for_lookup )
 	{
-		DHTPluginInterface	result = null;
+		DHTPluginBasicInterface	result = null;
 		
 		if (	(networks & NET_PUBLIC ) != 0 &&
 				(	( !prefer_i2p ) ||
 					( networks & NET_I2P ) == 0 )){
 
-			result = public_dht_plugin;
-
+			if ( for_lookup && use_bigly_dht_for_public_lookups ){
+				
+				result = public_dht_plugin_bigly;
+				
+			}else{
+			
+				result = public_dht_plugin;
+			}
 		}else if ((networks & NET_I2P ) != 0 ){
 
 			synchronized( i2p_dht_plugin_map ){
@@ -1184,7 +1227,7 @@ RelatedContentManager
 
 		throws Exception
 	{
-		final DHTPluginInterface dht_plugin = selectDHT( from_info.getNetworksInternal());
+		final DHTPluginBasicInterface dht_plugin = selectDHT( from_info.getNetworksInternal(), false );
 
 		// System.out.println( "publish: " + from_info.getString() + " -> " + to_info.getString() + ": " + dht_plugin );
 
@@ -1603,7 +1646,7 @@ RelatedContentManager
 				}
 			}
 
-			final DHTPluginInterface dht_plugin = selectDHT( to_info.getNetworksInternal());
+			final DHTPluginBasicInterface dht_plugin = selectDHT( to_info.getNetworksInternal(), false );
 
 			if ( dht_plugin != null && sizes.size() > 0 ){
 
@@ -1754,7 +1797,7 @@ RelatedContentManager
 	protected DownloadInfo
 	decodeInfo(
 		Map				map,
-		byte[]			from_hash,	// will be null for those trawled from teh local DHT
+		byte[]			from_hash,	// will be null for those trawled from the local DHT
 		int				level,
 		boolean			explicit,
 		Set<String>		unique_keys )
@@ -1933,7 +1976,7 @@ RelatedContentManager
 				existing_tags = Collections.emptySet();
 			}
 			
-			final DHTPluginInterface dht_plugin = selectDHT( networks );
+			final DHTPluginBasicInterface dht_plugin = selectDHT( networks, true );
 
 			if ( dht_plugin == null ){
 
@@ -2445,7 +2488,7 @@ RelatedContentManager
 		try{
 			final int max_hits = 30;
 
-			DHTPluginInterface dht_plugin = selectDHT( networks );
+			DHTPluginBasicInterface dht_plugin = selectDHT( networks, true );
 
 			if ( dht_plugin == null ){
 
@@ -3046,7 +3089,7 @@ RelatedContentManager
 
 					if ( download_info_map.containsKey( target )){
 
-							// target refers to downoad we already have
+							// target refers to download we already have
 
 						return;
 					}
@@ -3059,7 +3102,7 @@ RelatedContentManager
 
 					if ( download_priv_set.contains( key )){
 
-							// target refers to downoad we already have
+							// target refers to download we already have
 
 						return;
 					}
@@ -3574,13 +3617,22 @@ RelatedContentManager
 			}
 		}
 		
+		DHTPluginBasicInterface target_dht_plugin = use_bigly_dht_for_public_lookups?public_dht_plugin_bigly:null;
+		
 		for ( RelatedContentSearcher searcher: searchers ){
 
-			String net = searcher.getDHTPlugin().getNetwork();
+			DHTPluginBasicInterface dht_plugin = searcher.getDHTPlugin();
+			
+			String net = dht_plugin.getAENetwork();
 
 			if ( net == target_net ){
-
-				return( searcher.searchRCM( search_parameters, observer ));
+				
+				if ( 	target_net !=  AENetworkClassifier.AT_PUBLIC ||
+						target_dht_plugin == null || 
+						target_dht_plugin == dht_plugin ){
+					
+					return( searcher.searchRCM( search_parameters, observer ));		
+				}
 			}
 		}
 
@@ -3835,7 +3887,8 @@ RelatedContentManager
 
 	protected void
 	saveRelatedContent(
-		int	tick_count )
+		int			tick_count,
+		boolean		closing )
 	{
 		synchronized( rcm_lock ){
 
@@ -3995,9 +4048,12 @@ RelatedContentManager
 					deleteRelatedContent();
 				}
 
-				for ( RelatedContentSearcher searcher: searchers ){
-
-					searcher.updateKeyBloom( cc );
+				if ( !closing ){
+					
+					for ( RelatedContentSearcher searcher: searchers ){
+	
+						searcher.updateKeyBloom( cc );
+					}
 				}
 			}
 		}
@@ -4128,6 +4184,8 @@ RelatedContentManager
 
 				Set<String>	ws_domains = new HashSet<>();
 
+				/*
+				 * never really used these so let's stop wasting time getting them
 				List getright = BDecoder.decodeStrings( getURLList( to_torrent, "url-list" ));
 				List webseeds = BDecoder.decodeStrings( getURLList( to_torrent, "httpseeds" ));
 
@@ -4146,7 +4204,8 @@ RelatedContentManager
 						}
 					}
 				}
-
+				*/
+				
 				ws_keys = domainsToArray( ws_domains, 3 );
 			}
 		}catch( Throwable e ){
@@ -5105,6 +5164,8 @@ RelatedContentManager
 
 		private ContentCache	cc;
 
+		private Reference<String[]> title_word_cache = null;
+		
 		protected
 		DownloadInfo(
 			int			_version,
@@ -5178,6 +5239,26 @@ RelatedContentManager
 			}
 		}
 
+		protected String[]
+		getTitleWordCache()
+		{
+			Reference<String[]> ref = title_word_cache;
+			
+			if ( ref != null ){
+				
+				return( ref.get());
+			}
+			
+			return( null );
+		}
+		
+		protected void
+		setTitleWordCache(
+			String[]		words )
+		{
+			title_word_cache = new WeakReference<>( words );
+		}
+		
 		protected boolean
 		addInfo(
 			DownloadInfo		info )
@@ -5509,13 +5590,20 @@ RelatedContentManager
 
 	// can't move this class out of here as the key for the transfer type is based on its
 	// class name...
-
+	// note there is migration for this in DDBaseHelpers::xfer_migration
+	
 	protected static class
 	RCMSearchXFer
 		implements DistributedDatabaseTransferType
 	{
 	}
 
+	protected static class
+	RCMSearchXFerBiglyBT
+		implements DistributedDatabaseTransferType
+	{
+	}
+	
 	protected static class
 	ContentCache
 	{

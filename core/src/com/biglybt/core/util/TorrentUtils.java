@@ -44,9 +44,11 @@ import com.biglybt.core.internat.LocaleTorrentUtil;
 import com.biglybt.core.internat.LocaleUtilDecoder;
 import com.biglybt.core.internat.MessageText;
 import com.biglybt.core.logging.LogRelation;
+import com.biglybt.core.lws.LWSTorrent;
 import com.biglybt.core.proxy.AEProxyFactory;
 import com.biglybt.core.proxy.AEProxyFactory.PluginProxy;
 import com.biglybt.core.torrent.*;
+import com.biglybt.core.torrent.TOTorrentFactory.TorrentDataHolder;
 import com.biglybt.pif.utils.resourcedownloader.ResourceDownloader;
 import com.biglybt.pifimpl.local.utils.resourcedownloader.ResourceDownloaderFactoryImpl;
 import com.biglybt.util.MapUtils;
@@ -134,7 +136,8 @@ TorrentUtils
 	public static final String		TORRENT_AZ_PROP_HASHTREE_STATE			= "hash_tree";
 	public static final String		TORRENT_AZ_PROP_HYBRID_HASH_V2			= "hybrid_hash_v2";
 	private static final String		TORRENT_AZ_PROP_V2_ROOT_HASH_CACHE		= "v2_root_hash_cache";	// used for non-v2 torrents only
-	
+	public static final String		TORRENT_AZ_PROP_SIMPLE_TORRENT_DISABLED	= "simple_torrent_disable";
+
 	private static final String		MEM_ONLY_TORRENT_PATH		= "?/\\!:mem_only:!\\/?";
 
 	private static final long		PC_MARKER = RandomUtils.nextLong();
@@ -407,7 +410,7 @@ TorrentUtils
 				// have to go to byte-array level when cloning otherwise nested Map entries end up being shared between
 				// the original and the clone...
 			
-			return( TOTorrentFactory.deserialiseFromBEncodedByteArray( BEncoder.encode( torrent.serialiseToMap())));
+			return( TOTorrentFactory.deserialiseFromBEncodedByteArray( new TOTorrentFactory.TorrentDataHolder( BEncoder.encode( torrent.serialiseToMap()))));
 			
 		}catch( IOException e ){
 			
@@ -1071,6 +1074,88 @@ TorrentUtils
 		return( result );
 	}
 	
+	public static List<List<String>>
+	getMergedTrackers(
+		DownloadManager[]		dms )
+	{
+		List<TOTorrent>		torrents = new ArrayList<>();
+		
+		for ( DownloadManager dm : dms ){
+
+			TOTorrent torrent = dm.getTorrent();
+
+			if ( torrent == null ){
+
+				continue;
+			}
+			
+			torrents.add( torrent );
+		}
+		
+		return( getMergedTrackers( torrents ));
+	}
+	
+	public static List<List<String>>
+	getMergedTrackers(
+		List<TOTorrent>		torrents )
+	{
+		List<List<List<String>>>	all_trackers = new ArrayList<>();
+
+		for ( TOTorrent torrent: torrents ){
+
+			List<List<String>> group = TorrentUtils.announceGroupsToList(torrent);
+			
+			all_trackers.add( group );
+		}
+		
+		return( getMergedTrackersFromGroups( all_trackers ));
+	}
+	
+	public static List<List<String>>
+	getMergedTrackersFromGroups(
+		List<List<List<String>>>	all_trackers )
+	{
+		List<List<String>>	merged_trackers = new ArrayList<>();
+
+		Set<String>	added = new HashSet<>();
+
+		for ( List<List<String>> group: all_trackers ){
+
+			for ( List<String> set: group ){
+
+				List<String>	rem = new ArrayList<>();
+
+				for ( String url_str: set ){
+
+					try{
+						URL url = new URL( url_str );
+
+						if ( TorrentUtils.isDecentralised( url )){
+
+							continue;
+						}
+
+						if ( !added.contains( url_str )){
+
+							added.add( url_str );
+
+							rem.add( url_str );
+						}
+					}catch( Throwable e ){
+
+					}
+				}
+
+				if ( rem.size() > 0 ){
+
+					merged_trackers.add( rem );
+				}
+			}
+		}
+		
+		return( merged_trackers );
+	}
+	
 		/**
 		 * This method DOES NOT MODIFY THE TORRENT
 		 * @param groups
@@ -1474,14 +1559,21 @@ TorrentUtils
 		Set<String> mergesSet = new HashSet<>();
 		mergesSet.add( NO_VALID_URL_URL );	// this results in removal of this dummy url if present
 		for ( List<String> l: merge_urls ){
-			mergesSet.addAll(l);
+			for ( String url: l ){
+				url = url.toLowerCase( Locale.US );
+				url = UrlUtils.getCanonicalString( url );	
+				mergesSet.add(url);
+			}
 		}
 		Iterator<List<String>> it1 = base_urls.iterator();
 		while( it1.hasNext()){
 			List<String> l = it1.next();
 			Iterator<String> it2 = l.iterator();
 			while( it2.hasNext()){
-				if ( mergesSet.contains( it2.next())){
+				String url= it2.next();
+				url = url.toLowerCase( Locale.US );
+				url = UrlUtils.getCanonicalString( url );	
+				if ( mergesSet.contains( url )){
 					it2.remove();
 				}
 			}
@@ -3518,19 +3610,12 @@ TorrentUtils
 		}
 
 	 	@Override
-	  public void
+	 	public void
 		setCreatedBy(
 			byte[]		cb )
 	   	{
 	  		delegate.setCreatedBy( cb );
 	   	}
-
-		@Override
-		public boolean
-		isCreated()
-		{
-			return( delegate.isCreated());
-		}
 
 		@Override
 		public boolean
@@ -3922,6 +4007,25 @@ TorrentUtils
     		throw( new TOTorrentException( "Not supported", TOTorrentException.RT_HASH_FAILS ));
     	}
 
+	   	@Override
+		public TOTorrent
+		setSimpleTorrentDisabled(
+			boolean	disabled )
+		
+			throws TOTorrentException
+		{
+	   		return( delegate.setSimpleTorrentDisabled(disabled));
+		}
+		
+		@Override
+		public boolean
+		isSimpleTorrentDisabled()
+		
+			throws TOTorrentException
+		{
+			return( delegate.isSimpleTorrentDisabled());
+		}
+		
 		@Override
 		public boolean
 		getPrivate()
@@ -3936,7 +4040,7 @@ TorrentUtils
 
 			throws TOTorrentException
 		{
-				// don't support this as it changes teh torrent hash
+				// don't support this as it changes the torrent hash
 
 			throw( new TOTorrentException( "Can't amend private attribute", TOTorrentException.RT_WRITE_FAILS ));
 		}
@@ -4522,7 +4626,7 @@ TorrentUtils
 	/**
 	 * A nice string of a Torrent's hash
 	 *
-	 * @param torrent Torrent to fromat hash of
+	 * @param torrent Torrent to format hash of
 	 * @return Hash string in a nice format
 	 */
 	public static String nicePrintTorrentHash(TOTorrent torrent) {
@@ -4532,7 +4636,7 @@ TorrentUtils
 	/**
 	 * A nice string of a Torrent's hash
 	 *
-	 * @param torrent Torrent to fromat hash of
+	 * @param torrent Torrent to format hash of
 	 * @param tight No spaces between groups of numbers
 	 *
 	 * @return Hash string in a nice format
@@ -4715,11 +4819,9 @@ TorrentUtils
 
 				boolean	res = created_torrents_set.contains( hw );
 
-					// if we don't have a persistent record of creation, check the non-persisted version
-
 				if ( !res ){
 
-					res = torrent.isCreated();
+					res = torrent instanceof LWSTorrent;
 				}
 
 				// System.out.println( "isCreated:" + new String(torrent.getName()) + "/" + ByteFormatter.encodeString( hw.getBytes()) + " -> " + res );
@@ -4780,8 +4882,8 @@ TorrentUtils
 					rd.setProperty( "URL_Read_Timeout", timeout );
 				}
 
-				byte[] bytes = FileUtil.readInputStreamAsByteArray( rd.download(), BDecoder.MAX_BYTE_ARRAY_SIZE );
-
+				TorrentDataHolder bytes = new TOTorrentFactory.TorrentDataHolder( FileUtil.readInputStreamAsByteArray( rd.download(), BDecoder.MAX_BYTE_ARRAY_SIZE ));
+				
 				return( TOTorrentFactory.deserialiseFromBEncodedByteArray( bytes ));
 
 			}finally{
@@ -5488,14 +5590,6 @@ TorrentUtils
        		uid = TorrentUtils.getAnnounceGroupUID();
 
        		delegate.setAnnounceURLSets(_sets );
-       	}
-
-       	@Override
-        public TOTorrentAnnounceURLSet
-       	createAnnounceURLSet(
-       		URL[]	urls )
-       	{
-       		return( delegate.createAnnounceURLSet( urls ));
        	}
 
        	protected boolean

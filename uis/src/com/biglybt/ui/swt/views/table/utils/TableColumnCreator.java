@@ -28,7 +28,6 @@ import com.biglybt.pif.download.DownloadTypeComplete;
 import com.biglybt.pif.download.DownloadTypeIncomplete;
 import com.biglybt.pif.ui.tables.TableColumn;
 import com.biglybt.pif.ui.tables.TableColumnCreationListener;
-import com.biglybt.plugin.net.buddy.swt.columns.ColumnChatStatus;
 import com.biglybt.ui.swt.views.columnsetup.ColumnTC_ChosenColumn;
 import com.biglybt.ui.swt.views.columnsetup.ColumnTC_NameInfo;
 import com.biglybt.ui.swt.views.columnsetup.ColumnTC_Sample;
@@ -261,6 +260,7 @@ public class TableColumnCreator
 		c.put(TagAddedToDateItem.COLUMN_ID, new cInfo(TagAddedToDateItem.class, TagAddedToDateItem.DATASOURCE_TYPE));
 		c.put(TagSortItem.COLUMN_ID, new cInfo(TagSortItem.class, TagSortItem.DATASOURCE_TYPE));
 		c.put(NetworksItem.COLUMN_ID, new cInfo(NetworksItem.class, NetworksItem.DATASOURCE_TYPE));
+		c.put(NetworksIconsItem.COLUMN_ID, new cInfo(NetworksIconsItem.class, NetworksIconsItem.DATASOURCE_TYPE));
 		c.put(PeerSourcesItem.COLUMN_ID, new cInfo(PeerSourcesItem.class, PeerSourcesItem.DATASOURCE_TYPE));
 		c.put(AvailabilityItem.COLUMN_ID, new cInfo(AvailabilityItem.class, AvailabilityItem.DATASOURCE_TYPE));
 		c.put(AvgAvailItem.COLUMN_ID, new cInfo(AvgAvailItem.class, AvgAvailItem.DATASOURCE_TYPE));
@@ -286,6 +286,9 @@ public class TableColumnCreator
 		c.put(DateFileCompletedItem.COLUMN_ID, new cInfo(DateFileCompletedItem.class, DateFileCompletedItem.DATASOURCE_TYPE));
 		c.put(DateAddedItem.COLUMN_ID, new cInfo(DateAddedItem.class, DateAddedItem.DATASOURCE_TYPE));
 		c.put(DateLastActiveItem.COLUMN_ID, new cInfo(DateLastActiveItem.class, DateLastActiveItem.DATASOURCE_TYPE));
+		c.put(DateLastQueuedItem.COLUMN_ID, new cInfo(DateLastQueuedItem.class, DateLastQueuedItem.DATASOURCE_TYPE));
+		c.put(DateLastXferItem.COLUMN_ID, new cInfo(DateLastXferItem.class, DateLastXferItem.DATASOURCE_TYPE));
+		c.put(LastScrapeTimeItem.COLUMN_ID, new cInfo(LastScrapeTimeItem.class, LastScrapeTimeItem.DATASOURCE_TYPE));
 		
 		c.put(IPFilterItem.COLUMN_ID, new cInfo(IPFilterItem.class, IPFilterItem.DATASOURCE_TYPE));
 		c.put(AlertsItem.COLUMN_ID, new cInfo(AlertsItem.class, AlertsItem.DATASOURCE_TYPE));

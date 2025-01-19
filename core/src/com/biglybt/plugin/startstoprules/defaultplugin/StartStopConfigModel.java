@@ -354,10 +354,17 @@ public class StartStopConfigModel
 				"ConfigView.label.seeding.rankType.timed.minTimeWithPeers", 0, 0,
 				Integer.MAX_VALUE);
 
+		IntParameter paramMaxSeedingTimeWithPeers = model.addIntParameter2(
+				"StartStopManager_iTimed_MaxSeedingTimeWithPeers",
+				"ConfigView.label.seeding.rankType.timed.maxTimeWithPeers", 0, 0,
+				Integer.MAX_VALUE);
+
+		paramMaxSeedingTimeWithPeers.setIndent(1, true);
+		
 		ParameterGroup pgTimedOptions = model.createGroup(
 				"ConfigView.label.seeding.rankType.timed.options",
-				paramMinSeedingTimeWithPeers);
-
+				paramMinSeedingTimeWithPeers, paramMaxSeedingTimeWithPeers );
+		
 		ParameterGroup pgRankTypeOptions = model.createGroup(null, pgSeedOptions,
 				pgTimedOptions);
 
@@ -665,7 +672,30 @@ public class StartStopConfigModel
 
 		model.addHyperlinkParameter2("ConfigView.label.please.visit.here",
 				Wiki.DOWNLOADING_RULES);
+		
+		// queue position
+				
+		String[] qpLabels = {
+				MessageText.getString("OpenTorrentWindow.addPosition.first"),
+				MessageText.getString("OpenTorrentWindow.addPosition.last"),
+				//MessageText.getString("OpenTorrentWindow.addPosition.auto"),	// selected dynamically if needed
+			};
 
+		int[] qpValues = {
+			0, 1, // 2
+		};
+
+		IntListParameter queue_position = model.addIntListParameter2(
+				"Add Torrent Queue Position",
+				"label.new.download.queue.position", qpValues, qpLabels,
+				1 );
+		
+		LabelParameter qp_info = model.addLabelParameter2( "queue.position.info" );
+
+		ParameterGroup qp_group = model.createGroup( null, queue_position, qp_info );
+
+		qp_group.setNumberOfColumns( 2 );
+		
 		// sort type
 
 		String[] orderLabels = {

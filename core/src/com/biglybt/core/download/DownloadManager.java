@@ -134,6 +134,13 @@ DownloadManager
     
     public void 
     forceRecheck();
+    
+    	/**
+    	 * Called for certain config change events so that individual managers don't have to separately listener for changes
+    	 */
+    
+    public void
+    syncGlobalConfig();
 
     	/**
          * Reset the file download state to totally undownloaded. Download must be stopped
@@ -238,6 +245,18 @@ DownloadManager
     
     public void
     resume();
+    
+    	/**
+    	 * resume the download and wait until it reaches the target state. It may fail to reach this
+    	 * state (e.g. goes into an error state). It will however block if it looks like progress towards
+    	 * the state is being made (allocating/checking)
+    	 * @param target_state
+    	 * @return whether or not the state was reached
+    	 */
+    
+    public boolean
+    resume(
+    	int		target_state );
 
     public int
     getTCPListeningPortNumber();
@@ -413,9 +432,17 @@ DownloadManager
      * @return Whether all the non-skipped (non-DND) files exist
      */
 
+    public default boolean
+    filesExist(
+    	boolean		expected_to_be_allocated )
+    {
+    	return( filesExist( expected_to_be_allocated, false ));
+    }
+    
     public boolean
     filesExist(
-    	boolean	expected_to_be_allocated );
+    	boolean		expected_to_be_allocated,
+    	boolean		test_only );
 
     /**
      * Download must be stopped - used at start-of-day to recover error state
@@ -828,10 +855,11 @@ DownloadManager
     public void
     removeTPSListener(
     	DownloadManagerTPSListener		listener );
-
+    
     public void
     generateEvidence(
-        IndentWriter        writer );
+        IndentWriter        writer,
+        boolean				full );
 
     public int[] getStorageType(DiskManagerFileInfo[] infos);
 
@@ -893,15 +921,6 @@ DownloadManager
     fireGlobalManagerEvent(
     	int		event_type,
     	Object	event_data );
-
-		/**
-		 * Sets the priority for an array for files
-		 *
-		 * @param fileInfos
-		 * @param type
-		 * @since 5.6.2.1
-		 */
-	public void setFilePriorities(DiskManagerFileInfo[] fileInfos, int type);
 
 	public void
 	requestAttention();

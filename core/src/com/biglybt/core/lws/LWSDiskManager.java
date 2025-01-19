@@ -173,7 +173,7 @@ LWSDiskManager
 			}
 		}catch( Throwable e ){
 
-			setFailed( DiskManager.ET_OTHER, "Start failed", e );
+			setFailed( DiskManager.ET_OTHER, "Start failed", e, false );
 		}
 	}
 
@@ -235,7 +235,7 @@ LWSDiskManager
 
 		}catch( Throwable e ){
 
-			setFailed( DiskManager.ET_READ_ERROR, "getFiles failed", e );
+			setFailed( DiskManager.ET_READ_ERROR, "getFiles failed", e, false );
 
 			return( null );
 
@@ -307,6 +307,11 @@ LWSDiskManager
 		throw( new RuntimeException( "filesExist not implemented" ));
 	}
 
+	@Override
+	public void 
+	rateLimitChanged()
+	{
+	}
 
 	@Override
 	public DiskManagerWriteRequest
@@ -770,7 +775,8 @@ LWSDiskManager
 	setFailed(
 		int				type,
 		String			reason,
-		Throwable		cause )
+		Throwable		cause,
+		boolean			can_continue )
 	{
 		started = false;
 
@@ -794,6 +800,13 @@ LWSDiskManager
 		error_type		= ET_OTHER;
 	}
 
+	@Override
+	public boolean
+	isUploadOnly()
+	{
+		return( false );
+	}
+	
 	@Override
 	public TOTorrent
 	getTorrent()

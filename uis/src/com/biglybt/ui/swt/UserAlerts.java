@@ -202,13 +202,12 @@ UserAlerts
 		  }
 
 		  @Override
-		  public void
+		  public void 
 		  filePriorityChanged(
-				  DiskManager	dm,
-			  DiskManagerFileInfo file )
+				 DiskManager dm, 
+				 List<DiskManagerFileInfo> files)
 		  {
 		  }
-
 		  @Override
 		  public void
 		  pieceDoneChanged(
@@ -625,7 +624,10 @@ UserAlerts
 							
 							native_tray_icon.setPopupMenu( menu );
 							
-							MenuItem mi = new MenuItem( MessageText.getString( "sharing.progress.hide" ));
+							// Bug with internationalised text - https://github.com/BiglySoftware/BiglyBT/issues/3376
+							// so just use an X which should be pretty obvious to most
+							// MenuItem mi = new MenuItem( MessageText.getString( "sharing.progress.hide" ));
+							MenuItem mi = new MenuItem( "X" );
 							
 							mi.addActionListener(
 								new ActionListener(){
@@ -766,7 +768,7 @@ UserAlerts
 		The Java audio system keeps some threads running even after playback is finished.
 		One of them, named "Java Sound event dispatcher", is *not* a daemon
 		thread and keeps the VM alive.
-		We have to locate and interrupt it explicitely.
+		We have to locate and interrupt it explicitly.
 		*/
 
 		try{

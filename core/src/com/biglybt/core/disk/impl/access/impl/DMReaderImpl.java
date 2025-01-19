@@ -661,7 +661,7 @@ DMReaderImpl
 
 			if ( request.getErrorIsFatal()){
 				
-				disk_manager.setFailed( DiskManager.ET_READ_ERROR, "Disk read error", e );
+				disk_manager.setFailed( DiskManager.ET_READ_ERROR, "Disk read error", e, false );
 			}
 			
 			Debug.printStackTrace( e );
@@ -961,10 +961,16 @@ DMReaderImpl
 			
 			if ( dm_request.getErrorIsFatal()){
 			
-				disk_manager.setFailed( error, "Disk read error", cause );
+				disk_manager.setFailed( error, "Disk read error", cause, true );
 			}
 			
-			Debug.printStackTrace( cause );
+			if ( !disk_manager.isUploadOnly()){
+			
+					// we can get errors after switching to upload only due to the way it is
+					// implemented via download rate limits
+				
+				Debug.printStackTrace( cause );
+			}
 
 			listener.readFailed( dm_request, cause );
 		}

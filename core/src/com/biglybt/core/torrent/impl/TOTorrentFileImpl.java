@@ -43,6 +43,8 @@ TOTorrentFileImpl
 	
 	private final int		index;
 	private final long		file_length;
+	private final long		offset_in_torrent;
+	
 	private final byte[][]	path_components;
 	private final byte[][]	path_components_utf8;
 
@@ -69,9 +71,10 @@ TOTorrentFileImpl
 
 		throws TOTorrentException
 	{
-		torrent			= _torrent;
-		index			= _index;
-		file_length		= _len;
+		torrent				= _torrent;
+		index				= _index;
+		file_length			= _len;
+		offset_in_torrent	= _torrent_offset;
 
 		first_piece_number 	= (int)( _torrent_offset / torrent.getPieceLength());
 		last_piece_number	= (int)(( _torrent_offset + file_length - 1 ) /  torrent.getPieceLength());
@@ -123,6 +126,8 @@ TOTorrentFileImpl
 		torrent				= _torrent;
 		index				= _index;
 		file_length			= _len;
+		offset_in_torrent	= _torrent_offset;
+		
 		path_components		= _path_components;
 		path_components_utf8 = null;
 
@@ -165,6 +170,8 @@ TOTorrentFileImpl
 		torrent				= _torrent;
 		index				= _index;
 		file_length			= _len;
+		offset_in_torrent	= _torrent_offset;
+		
 		path_components		= _path_components;
 		path_components_utf8 = _path_components_utf8;
 
@@ -199,8 +206,10 @@ TOTorrentFileImpl
 					throw (new TOTorrentException("Torrent file contains illegal '..' component", TOTorrentException.RT_DECODE_FAILS));
 
 				// intern directories as they're likely to repeat
-				if(i < (pc.length - 1))
-					pc[i] = StringInterner.internBytes(pc[i]);
+				// parg - removed this, costly and simpler to do on a per-torrent file basis when
+				// decoding the file components
+				//if(i < (pc.length - 1))
+				//	pc[i] = StringInterner.internBytes(pc[i]);
 			}
 		}
 	}
@@ -226,6 +235,13 @@ TOTorrentFileImpl
 		return( file_length );
 	}
 
+	@Override
+	public long 
+	getOffsetInTorrent()
+	{
+		return( offset_in_torrent );
+	}
+	
 	public byte[][]
 	getPathComponentsBasic()
 	{
@@ -401,7 +417,17 @@ TOTorrentFileImpl
 	}
 	
 	@Override
-	public String getRelativePath() {
+	public String 
+	getRelativePath()
+	{
+		return( getRelativePath( null ));
+	}
+	
+	@Override
+	public String 
+	getRelativePath( 
+		LocaleUtilDecoder	decoder )
+	{
 		if (torrent == null) {
 			return "";
 		}
@@ -442,15 +468,20 @@ TOTorrentFileImpl
 			return sRelativePathSB==null?"":sRelativePathSB.toString();
 		}
 
-		LocaleUtilDecoder decoder = null;
-		try {
-			decoder = LocaleTorrentUtil.getTorrentEncodingIfAvailable(torrent);
-			if (decoder == null) {
-				LocaleUtil localeUtil = LocaleUtil.getSingleton();
-				decoder = localeUtil.getSystemDecoder();
+		if ( decoder == null ){
+			
+			try{
+				decoder = LocaleTorrentUtil.getTorrentEncodingIfAvailable(torrent);
+				
+				if (decoder == null) {
+					
+					LocaleUtil localeUtil = LocaleUtil.getSingleton();
+					
+					decoder = localeUtil.getSystemDecoder();
+				}
+			} catch (Exception e) {
+				// Do Nothing
 			}
-		} catch (Exception e) {
-			// Do Nothing
 		}
 
 		if (decoder != null) {

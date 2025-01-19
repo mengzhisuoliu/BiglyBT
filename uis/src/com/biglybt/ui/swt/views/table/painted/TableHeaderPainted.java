@@ -32,7 +32,10 @@ import com.biglybt.core.config.COConfigurationManager;
 import com.biglybt.core.config.ParameterListener;
 import com.biglybt.core.internat.MessageText;
 import com.biglybt.ui.common.table.TableColumnCore;
+import com.biglybt.ui.common.table.TableGroupRowRunner;
+import com.biglybt.ui.common.table.TableRowCore;
 import com.biglybt.ui.common.table.TableStructureEventDispatcher;
+import com.biglybt.ui.common.table.impl.TableColumnManager;
 import com.biglybt.ui.swt.ConfigKeysSWT;
 import com.biglybt.ui.swt.Utils;
 import com.biglybt.ui.swt.imageloader.ImageLoader;
@@ -105,6 +108,7 @@ public class TableHeaderPainted
 		cHeaderArea.addListener(SWT.MouseDown, l);
 		cHeaderArea.addListener(SWT.MouseUp, l);
 		cHeaderArea.addListener(SWT.MouseMove, l);
+		cHeaderArea.addListener(SWT.MouseDoubleClick, l);
 
 		Transfer[] types = new Transfer[] {
 			TextTransfer.getInstance()
@@ -281,32 +285,42 @@ public class TableHeaderPainted
 
 			int xOfs = x + 2;
 
-			boolean onlyShowImage = column.showOnlyImage();
+			boolean showIcon		= column.getIconReferenceEnabled();
+			boolean onlyShowImage	= column.showOnlyImage();
 			String text = "";
-			if (!onlyShowImage) {
+			if (!onlyShowImage || !showIcon ) {
 				text = MessageText.getString(column.getTitleLanguageKey());
 			}
 
 			int style = SWT.WRAP | SWT.CENTER;
 			Image image = null;
-			String imageID = column.getIconReference();
-			if (imageID != null) {
-				image = ImageLoader.getInstance().getImage(imageID);
-				if (ImageLoader.isRealImage(image)) {
-					if (onlyShowImage) {
-						text = null;
-						Rectangle imageBounds = image.getBounds();
-						e.gc.drawImage(image,
-								(int) (x + (w / 2.0) - (imageBounds.width / 2.0) + 0.5),
-								(headerHeight / 2) - (imageBounds.height / 2));
+			String imageID = null;
+			
+			int contentWidth = 0;
+			
+			if ( showIcon ){
+				imageID = column.getIconReference();
+				if (imageID != null) {
+					image = ImageLoader.getInstance().getImage(imageID);
+					if (ImageLoader.isRealImage(image)) {
+						if (onlyShowImage) {
+							text = null;
+							Rectangle imageBounds = image.getBounds();
+							e.gc.drawImage(image,
+									(int) (x + (w / 2.0) - (imageBounds.width / 2.0) + 0.5),
+									(headerHeight / 2) - (imageBounds.height / 2));
+							
+							contentWidth = imageBounds.width;
+							
+						} else {
+							text = "%0 " + text;
+						}
 					} else {
-						text = "%0 " + text;
+						image = null;
 					}
-				} else {
-					image = null;
 				}
 			}
-
+		
 			if (text != null) {
 				sp = new GCStringPrinter(e.gc, text,
 						new Rectangle(xOfs, yOfs - 1, wText - 4, headerHeight - yOfs + 2),
@@ -317,6 +331,9 @@ public class TableHeaderPainted
 					});
 				}
 				sp.calculateMetrics();
+				
+				contentWidth = sp.getCalculatedPreferredSize().x;
+				
 				if (sp.isWordCut() || sp.isCutoff()) {
 					Font font = e.gc.getFont();
 					e.gc.setFont(fontHeaderSmall);
@@ -331,6 +348,8 @@ public class TableHeaderPainted
 				ImageLoader.getInstance().releaseImage(imageID);
 			}
 
+			column.setPreferredHeaderWidth( contentWidth + 10 );
+			
 			x += w;
 		}
 
@@ -431,6 +450,8 @@ public class TableHeaderPainted
 	private static class MouseListeners
 		implements Listener
 	{
+		private int	upClicksPending = 0;
+				
 		private final Canvas cHeaderArea;
 
 		private final TableViewPainted tv;
@@ -453,7 +474,50 @@ public class TableHeaderPainted
 			if (cHeaderArea.isDisposed()) {
 				return;
 			}
+			
 			switch (e.type) {
+				case SWT.MouseDoubleClick:{
+					if ( upClicksPending == 1 ){
+						
+						upClicksPending = -1;
+						
+						TableColumnCore column = tv.getTableColumnByOffset(e.x);
+						
+						if ( column != null ){
+							
+							column.setPreferredWidth(-1);
+
+							int done = 
+								tv.runForAllRows(new TableGroupRowRunner() {
+									@Override
+									public void run(TableRowCore row) {
+										row.fakeRedraw( column.getName());
+									}
+								});
+
+							int pref;
+
+							if ( done == 0 ){
+								
+								pref = Math.max( column.getMinWidth(), column.getPreferredHeaderWidth());
+								
+							}else{
+								
+								pref = column.getPreferredWidth();
+							}
+							
+							if ( pref != -1 ){
+
+								column.setWidth( pref );
+							}
+							
+								// we need this to avoid scroll bars getting confused for some reason...
+							
+							TableStructureEventDispatcher.getInstance(tv.getTableID()).tableStructureChanged(false, null);
+						}
+					}
+					return;
+				}
 				case SWT.MouseDown: {
 					if (e.button != 1) {
 						return;
@@ -484,18 +548,30 @@ public class TableHeaderPainted
 					}
 					if (mouseDown) {
 						if (columnSizing == null) {
-							TableColumnCore column = tv.getTableColumnByOffset(e.x);
-							if (column != null) {
-								boolean addColumn = (e.stateMask & SWT.MOD1) > 0;
-								if (addColumn) {
-									tv.addSortColumn(column);
-								} else {
-									tv.setSortColumns(new TableColumnCore[] { column }, true);
+							upClicksPending++;
+							Utils.execSWTThreadLater(e.display.getDoubleClickTime()/2,()->{
+								if ( upClicksPending > 0 ){
+									upClicksPending--;
+									TableColumnCore column = tv.getTableColumnByOffset(e.x);
+									if (column != null) {
+										boolean addColumn = (e.stateMask & SWT.MOD1) > 0;
+										if (addColumn) {
+											tv.addSortColumn(column);
+										} else {
+											tv.setSortColumns(new TableColumnCore[] { column }, true);
+										}
+									}
 								}
-							}
+							});
 						} else {
 							int diff = (e.x - columnSizingStart);
 							columnSizing.setWidthPX(columnSizing.getWidth() + diff);
+							
+							TableColumnManager tcm = TableColumnManager.getInstance();
+							
+							String tableID = tv.getTableID();
+							
+							tcm.saveTableColumns(tv.getDataSourceType(), tableID);
 						}
 					}
 					columnSizing = null;
@@ -608,6 +684,12 @@ public class TableHeaderPainted
 				}
 				tv.setColumnsOrdered(visibleColumns);
 
+				TableColumnManager tcm = TableColumnManager.getInstance();
+				
+				String tableID = tv.getTableID();
+				
+				tcm.saveTableColumns(tv.getDataSourceType(), tableID);
+				
 				TableStructureEventDispatcher.getInstance(
 						tv.getTableID()).tableStructureChanged(columnAdded,
 								tv.getDataSourceType());

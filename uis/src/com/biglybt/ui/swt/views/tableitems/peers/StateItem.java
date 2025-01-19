@@ -22,9 +22,16 @@
 
 package com.biglybt.ui.swt.views.tableitems.peers;
 
+
 import com.biglybt.core.internat.MessageText;
+import com.biglybt.core.networkmanager.NetworkConnection;
+import com.biglybt.core.networkmanager.Transport;
+import com.biglybt.core.peer.PEPeer;
 import com.biglybt.core.peer.impl.PEPeerTransport;
+import com.biglybt.core.proxy.AEProxyFactory.PluginProxy;
+import com.biglybt.core.util.AENetworkClassifier;
 import com.biglybt.pif.ui.tables.*;
+import com.biglybt.pifimpl.local.PluginCoreUtils;
 import com.biglybt.ui.swt.views.table.CoreTableColumnSWT;
 
 
@@ -54,14 +61,49 @@ public class StateItem
 	
 	boolean	reconnect;
 	
+	String extra = null;
+	
+	boolean localPeer = ( ds instanceof PEPeer )?((PEPeer)ds).isMyPeer():false;
+	
 	if ( ds instanceof PEPeerTransport ){
     
 		PEPeerTransport peer = (PEPeerTransport)ds;
-		
+			
 		state = peer.getConnectionState();
 	
 		reconnect = peer.isReconnect();
-		
+		 
+		if ( state == PEPeerTransport.CONNECTION_CONNECTING && !peer.isIncoming()){
+			
+			NetworkConnection nc = PluginCoreUtils.unwrap( peer.getPluginConnection());
+			
+			if ( nc != null ){
+				
+				Transport transport = nc.getTransport();
+				
+				if ( transport != null ){
+					
+					if ( transport.isSOCKS()){
+						
+						extra = " (SOCKS)";
+						
+					}else{
+					
+						PluginProxy pp = transport.getPluginProxy();
+						
+						if ( pp != null ){
+							
+							String net = AENetworkClassifier.categoriseAddress( pp.getHost());
+							
+							if ( net != AENetworkClassifier.AT_PUBLIC ){
+
+								extra = " (" + net + ")";
+							}
+						}
+					}
+				}
+			}
+		}
 	}else{
 		
 		if ( ds != null ){
@@ -69,7 +111,7 @@ public class StateItem
 			state = PEPeerTransport.CONNECTION_FULLY_ESTABLISHED;	// assume other peer types (e.g. MyPeer) are connected
 		}
 		
-		reconnect = false;
+		reconnect	= false;
 	}
 	    
     if( !cell.setSortValue( state ) && cell.isValid() ) {
@@ -78,27 +120,32 @@ public class StateItem
 
     String state_text = "";
 
-    switch( state ) {
-	    case PEPeerTransport.CONNECTION_PENDING :
-	    	state_text = MessageText.getString( "PeersView.state.pending" );
-	    	break;
-	    case PEPeerTransport.CONNECTION_CONNECTING :
-	    	state_text = MessageText.getString( "PeersView.state.connecting" );
-	    	break;
-	    case PEPeerTransport.CONNECTION_WAITING_FOR_HANDSHAKE :
-	    	state_text = MessageText.getString( "PeersView.state.handshake" );
-	    	break;
-	    case PEPeerTransport.CONNECTION_FULLY_ESTABLISHED :
-	    	state_text = MessageText.getString( "PeersView.state.established" );
-	    	break;
-    }
-
-    if ( state != PEPeerTransport.CONNECTION_FULLY_ESTABLISHED ){
-    
-    	if ( reconnect ){
-    	
-    		state_text += " *";
-    	}
+    if ( !localPeer ){
+	    switch( state ) {
+		    case PEPeerTransport.CONNECTION_PENDING :
+		    	state_text = MessageText.getString( "PeersView.state.pending" );
+		    	break;
+		    case PEPeerTransport.CONNECTION_CONNECTING :
+		    	state_text = MessageText.getString( "PeersView.state.connecting" );
+		    	if ( extra != null ){
+		    		state_text += extra;
+		    	}
+		    	break;
+		    case PEPeerTransport.CONNECTION_WAITING_FOR_HANDSHAKE :
+		    	state_text = MessageText.getString( "PeersView.state.handshake" );
+		    	break;
+		    case PEPeerTransport.CONNECTION_FULLY_ESTABLISHED :
+		    	state_text = MessageText.getString( "PeersView.state.established" );
+		    	break;
+	    }
+	
+	    if ( state != PEPeerTransport.CONNECTION_FULLY_ESTABLISHED ){
+	    
+	    	if ( reconnect ){
+	    	
+	    		state_text += " *";
+	    	}
+	    }
     }
     
     cell.setText( state_text );

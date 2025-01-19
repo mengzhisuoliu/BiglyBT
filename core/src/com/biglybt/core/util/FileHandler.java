@@ -23,6 +23,7 @@ import com.biglybt.core.diskmanager.file.impl.FMFileAccessController.FileAccesso
 
 import java.io.*;
 import java.net.URI;
+import java.nio.file.Files;
 import java.util.Locale;
 
 @SuppressWarnings("MethodMayBeStatic")
@@ -46,7 +47,7 @@ public class FileHandler
 	/**
 	 * @implNote 
 	 *  parent and subDirs may contain File.separator<br/>
-	 *  parent might be empty string (default is File.separater)
+	 *  parent might be empty string (default is File.separator)
 	 */
 	public File newFile(String parent, String... subDirs) {
 		if (subDirs == null || subDirs.length == 0) {
@@ -177,13 +178,32 @@ public class FileHandler
 		// could use 
 		// return getRelativePath(_parent, _child) != null;
 		// except instead of canonise(..), it uses getCanonicalPathSafe(..)
-		File parent = FileUtil.canonise(_parent);
-		File child = FileUtil.canonise(_child);
+		
+		// canonicalising files is expensive as it hits the file system. so do an initial test
+		// on absolute paths - if this works then it is good enough, otherwise revert to more expensive test
+		
+		File parent = _parent.getAbsoluteFile();
+		File child = _child.getAbsoluteFile();
 		if (parent.equals(child)) {
 			return (FileUtil.areFilePathsIdentical(_parent, _child));
 		}
 		String parent_s = parent.getPath();
 		String child_s = child.getPath();
+		if (parent_s.charAt(parent_s.length() - 1) != File.separatorChar) {
+			parent_s += File.separatorChar;
+		}
+		if ( child_s.startsWith(parent_s)){
+			
+			return( true );
+		}
+		
+		parent = FileUtil.getCanonicalFile(_parent);
+		child = FileUtil.getCanonicalFile(_child);
+		if (parent.equals(child)) {
+			return (FileUtil.areFilePathsIdentical(_parent, _child));
+		}
+		parent_s = parent.getPath();
+		child_s = child.getPath();
 		if (parent_s.charAt(parent_s.length() - 1) != File.separatorChar) {
 			parent_s += File.separatorChar;
 		}
@@ -194,29 +214,20 @@ public class FileHandler
 	getFileStore(
 		File		file )
 	{
-		if ( FileUtil.mToPath != null && FileUtil.mPath_getFileStore != null ){
+		// file has to exist to have a filestore so walk up the tree if necessary
 
-			// file has to exist to have a filestore so walk up the tree if necessary
+		File temp = file;
 
-			File temp = file;
+		while( temp != null ){
 
-			while( temp != null ){
+			try{
 
-				try{
-					/* FileStore is minSDK 26 on Android
-					 */
+				return Files.getFileStore(temp.toPath());
 
-					/* Path */ Object path = FileUtil.mToPath.invoke( temp );
-
-					/* FileStore */ Object fs = FileUtil.mPath_getFileStore.invoke(null, path);
-
-					return( fs );
-
-				}catch( Throwable e ){
-				}
-
-				temp = temp.getParentFile();
+			}catch( Throwable e ){
 			}
+
+			temp = temp.getParentFile();
 		}
 
 		return( null );

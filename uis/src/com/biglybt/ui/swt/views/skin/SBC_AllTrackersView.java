@@ -31,6 +31,7 @@ import org.eclipse.swt.widgets.*;
 
 import com.biglybt.core.CoreFactory;
 import com.biglybt.core.download.DownloadManager;
+import com.biglybt.core.internat.MessageText;
 import com.biglybt.core.tag.*;
 import com.biglybt.core.tag.TagFeatureProperties.TagProperty;
 import com.biglybt.core.tracker.AllTrackersManager;
@@ -49,6 +50,7 @@ import com.biglybt.ui.swt.Messages;
 import com.biglybt.ui.swt.SimpleTextEntryWindow;
 import com.biglybt.ui.swt.Utils;
 import com.biglybt.ui.swt.columns.alltrackers.*;
+import com.biglybt.ui.swt.components.BubbleTextBox;
 import com.biglybt.ui.swt.maketorrent.MultiTrackerEditor;
 import com.biglybt.ui.swt.maketorrent.TrackerEditorListener;
 import com.biglybt.ui.swt.mdi.MdiEntrySWT;
@@ -73,6 +75,7 @@ import com.biglybt.pif.ui.tables.TableColumn;
 import com.biglybt.pif.ui.tables.TableColumnCreationListener;
 import com.biglybt.pif.ui.toolbar.UIToolBarItem;
 import com.biglybt.plugin.net.buddy.BuddyPluginUtils;
+import com.biglybt.ui.swt.views.utils.TagUIUtils.TagMenuOptions;
 
 
 public class SBC_AllTrackersView
@@ -286,6 +289,14 @@ public class SBC_AllTrackersView
 						new ColumnAllTrackersPeersReceived(column);
 					}
 				});
+		
+		tableManager.registerColumn(AllTrackersViewEntry.class, ColumnAllTrackersActiveRequestCount.COLUMN_ID,
+				new TableColumnCreationListener() {
+					@Override
+					public void tableColumnCreated(TableColumn column) {
+						new ColumnAllTrackersActiveRequestCount(column);
+					}
+				});
 
 		
 		tableManager.setDefaultColumnNames(TABLE_NAME,
@@ -402,7 +413,12 @@ public class SBC_AllTrackersView
 			SWTSkinObjectTextbox soFilter = (SWTSkinObjectTextbox) getSkinObject(
 				"filterbox");
 			if (soFilter != null) {
-				tv.enableFilterCheck(soFilter.getBubbleTextBox(), this);
+				
+				BubbleTextBox bubbleTextBox = soFilter.getBubbleTextBox();
+				
+				tv.enableFilterCheck(bubbleTextBox, this);
+				
+				bubbleTextBox.setMessage( MessageText.getString( "Button.search2" ) );
 			}
 
 			tv.setRowDefaultHeightEM(1);
@@ -655,6 +671,8 @@ public class SBC_AllTrackersView
 		List<Tag> all_tags = TagManagerFactory.getTagManager().getTagType( TagType.TT_DOWNLOAD_MANUAL ).getTags();
 		
 		List<Tag> tracker_prop_tags = new ArrayList<Tag>();
+
+		Map<Tag, Integer> mapTaggableCount = new HashMap<>();
 				
 		for ( Tag t: all_tags ){
 			
@@ -665,28 +683,52 @@ public class SBC_AllTrackersView
 			for ( TagProperty prop: props ){
 
 				String tp_name = prop.getName( false );
-				
-				if ( tp_name.equals( TagFeatureProperties.PR_TRACKERS )){
-					
-					String[] hosts = prop.getStringList();
-					
-					if ( hosts != null && hosts.length > 0 ){
-						
-						tracker_prop_tags.add( t );
+				if (!tp_name.equals(TagFeatureProperties.PR_TRACKERS)) {
+					continue;
+				}
+
+				String[] hosts = prop.getStringList();
+				if (hosts == null || hosts.length == 0) {
+					continue;
+				}
+
+				tracker_prop_tags.add( t );
+
+				String[] existing_hosts = prop.getStringList();
+				if (existing_hosts == null || existing_hosts.length == 0) {
+					continue;
+				}
+
+				for (AllTrackersTracker tracker : trackers) {
+					String name = tracker.getTrackerName();
+
+					int pos = name.indexOf( "//" );
+
+					if ( pos != -1 ){
+
+						name = name.substring( pos+2 );
+					}
+
+					for (String existingHost : existing_hosts) {
+						if (name.equals(existingHost)) {
+							mapTaggableCount.compute(t, (tag, count) -> count == null ? 1 : count + 1);
+							break;
+						}
 					}
 				}
 			}
 		}
-		
-		MenuItem itemAddToTag = 
-			TagUIUtils.createTagSelectionMenu(
-				menu,
-				"alltorrents.add.torrents.to.tag",
-				tracker_prop_tags,
-				new TagUIUtils.TagSelectionListener(){
-					
-					@Override
-					public void selected(Tag tag){
+
+		Menu menuAddToTag = new Menu( menu.getShell(), SWT.DROP_DOWN);
+		MenuItem itemAddToTag = new MenuItem( menu, SWT.CASCADE);
+		Messages.setLanguageText( itemAddToTag, "alltorrents.add.torrents.to.tag" );
+		itemAddToTag.setMenu( menuAddToTag );
+
+		TagMenuOptions.Builder builder = TagMenuOptions.Builder()
+			.setTagMenuFilter(tagsToFilter -> tracker_prop_tags)
+			.setMapTaggableCount(mapTaggableCount, trackers.size())
+			.setTagSelectionListener(
+				(tag, checked) -> {
 					
 						TagFeatureProperties tfp = (TagFeatureProperties)tag;
 
@@ -716,14 +758,21 @@ public class SBC_AllTrackersView
 										name = name.substring( pos+2 );
 									}
 									
-									new_hosts.add( name );
+									if (checked) {
+										new_hosts.add( name );
+									} else {
+										new_hosts.remove( name );
+									}
 								}
-								
+
+								// Minor problem: if new_hosts is now [] due to uncheck,
+								// the tag will no longer be listed as an available option
+								// for this menu (since we rely on PR_TRACKERS to be non-empty)
 								prop.setStringList( new_hosts.toArray( new String[0]));
 							}
 						}
-					}
-				});
+					});
+		TagUIUtils.createTagSelectionMenu(builder, menuAddToTag);
 		
 		itemAddToTag.setEnabled( hasSelection );
 		
@@ -1497,7 +1546,7 @@ public class SBC_AllTrackersView
 		}
 			// if we're not active then ignore this update as we don't want invisible components
 			// updating the toolbar with their invisible selection. Note that unfortunately the
-			// call we get here when activating a view does't yet have focus
+			// call we get here when activating a view doesn't yet have focus
 
 		if ( !isVisible()){
 			if ( !force ){
@@ -1820,6 +1869,13 @@ public class SBC_AllTrackersView
 		getAverageRequestDuration()
 		{
 			return( tracker.getAverageRequestDuration());
+		}
+		
+		@Override
+		public int 
+		getActiveRequestCount()
+		{
+			return( tracker.getActiveRequestCount());
 		}
 		
 		@Override

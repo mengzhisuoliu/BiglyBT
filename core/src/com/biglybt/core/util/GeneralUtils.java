@@ -32,6 +32,7 @@ import javax.sound.sampled.LineEvent;
 import javax.sound.sampled.LineListener;
 
 import com.biglybt.core.config.COConfigurationManager;
+import com.biglybt.core.config.ConfigKeys;
 import com.biglybt.core.config.ParameterListener;
 import com.biglybt.core.util.average.AverageFactory;
 import com.biglybt.core.util.average.MovingImmediateAverage;
@@ -263,13 +264,17 @@ GeneralUtils
 		return s;
 	}
 
-	private static int SMOOTHING_UPDATE_WINDOW	 	= 60;
+	public static final int SMOOTHING_UPDATE_WINDOW_DEFAULT	 	= 30;
+	public static final int SMOOTHING_UPDATE_WINDOW_MIN		 	= 10;
+	public static final int SMOOTHING_UPDATE_WINDOW_MAX		 	= 30*60;
+
+	private static int SMOOTHING_UPDATE_WINDOW	 	= SMOOTHING_UPDATE_WINDOW_DEFAULT;
 	private static int SMOOTHING_UPDATE_INTERVAL 	= 1;
 
 
 	static{
 		COConfigurationManager.addAndFireParameterListener(
-			"Stats Smoothing Secs",
+			ConfigKeys.Stats.ICFG_STATS_SMOOTHING_SECS,
 			new ParameterListener()
 			{
 				@Override
@@ -277,15 +282,15 @@ GeneralUtils
 				parameterChanged(
 					String xxx )
 				{
-					SMOOTHING_UPDATE_WINDOW	= COConfigurationManager.getIntParameter( "Stats Smoothing Secs" );
+					SMOOTHING_UPDATE_WINDOW	= COConfigurationManager.getIntParameter( ConfigKeys.Stats.ICFG_STATS_SMOOTHING_SECS );
 
-					if ( SMOOTHING_UPDATE_WINDOW < 30 ){
+					if ( SMOOTHING_UPDATE_WINDOW < SMOOTHING_UPDATE_WINDOW_MIN ){
 
-						SMOOTHING_UPDATE_WINDOW = 30;
+						SMOOTHING_UPDATE_WINDOW = SMOOTHING_UPDATE_WINDOW_MIN;
 
-					}else if ( SMOOTHING_UPDATE_WINDOW > 30*60 ){
+					}else if ( SMOOTHING_UPDATE_WINDOW > SMOOTHING_UPDATE_WINDOW_MAX ){
 
-						SMOOTHING_UPDATE_WINDOW = 30*60;
+						SMOOTHING_UPDATE_WINDOW = SMOOTHING_UPDATE_WINDOW_MAX;
 					}
 
 					SMOOTHING_UPDATE_INTERVAL = SMOOTHING_UPDATE_WINDOW/60;
@@ -1514,7 +1519,7 @@ GeneralUtils
 					{0x10518,0x004B},	//	( 𐔘 → K ) ELBASAN LETTER QE → LATIN CAPITAL LETTER K	#
 					{0x0130,0x0049},	//	( İ → I ) LATIN CAPITAL LETTER I WITH DOT ABOVE → LATIN CAPITAL LETTER I // added for symmetry with LATIN SMALL LETTER DOTLESS I → LATIN SMALL LETTER I
 					// A lot of mappings that originally were to lowercase-l had to be changed to avoid surprising users.
-					// It would be best if we could fuzzy-match all of these agains either "I", "l", "|" or "1", but currently that’s not possible
+					// It would be best if we could fuzzy-match all of these against either "I", "l", "|" or "1", but currently that’s not possible
 					// without introducing undesirable matches.
 					{0x05C0,0x006C},	//	( ‎׀‎ → l ) HEBREW PUNCTUATION PASEQ → LATIN SMALL LETTER L	# →|→
 					{0x2223,0x007C},	//	( ∣ → | ) DIVIDES → VERTICAL LINE	#
