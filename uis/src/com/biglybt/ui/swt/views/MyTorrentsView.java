@@ -1353,77 +1353,86 @@ public class MyTorrentsView
 		}
 
 		TagGroup currentGroup = null;
-				
-		for ( final Tag tag: tags ){
 			
-			boolean isCat = (tag instanceof Category);
-
-			TagGroup tg = tag.getGroupContainer();
+		try{
+				// get a lot of relayoutting when building the buttons
 			
-			if ( tg != currentGroup && currentGroup != null && !currentGroup.getTags().isEmpty()){
-								
-				Divider div = new Divider( cTitleCategoriesAndTags, SWT.NULL );
+			cTitleCategoriesAndTags.setLayoutDeferred( true );
+			
+			for ( final Tag tag: tags ){
 				
-  				RowData rd = new RowData();
-  				
-  				div.setLayoutData(rd);
-			}
-
-			currentGroup = tg;
-
-			TagCanvas button = new TagCanvas(cTitleCategoriesAndTags, tag, false, true);
-			TagPainter painter = button.getTagPainter();
-			button.setTrigger(buttonListener);
-			painter.setCompact(true,
-					COConfigurationManager.getBooleanParameter(
-							"Library.ShowTagButtons.ImageOverride"));
-
-			if (isCat) {
-				if (spacer == null) {
-					spacer = new Label(cTitleCategoriesAndTags, SWT.NONE);
-					RowData rd = new RowData();
-					rd.width = 8;
-					spacer.setLayoutData(rd);
-					spacer.moveAbove(null);
-					if ( titleLab != null ){
-						titleLab.moveAbove(spacer);
-					}
+				boolean isCat = (tag instanceof Category);
+	
+				TagGroup tg = tag.getGroupContainer();
+				
+				if ( tg != currentGroup && currentGroup != null && !currentGroup.getTags().isEmpty()){
+									
+					Divider div = new Divider( cTitleCategoriesAndTags, SWT.NULL );
+					
+	  				RowData rd = new RowData();
+	  				
+	  				div.setLayoutData(rd);
 				}
-				button.moveAbove(spacer);
+	
+				currentGroup = tg;
+	
+				TagCanvas button = new TagCanvas(cTitleCategoriesAndTags, tag, false, true);
+				TagPainter painter = button.getTagPainter();
+				button.setTrigger(buttonListener);
+				painter.setCompact(true,
+						COConfigurationManager.getBooleanParameter(
+								"Library.ShowTagButtons.ImageOverride"));
+	
+				if (isCat) {
+					if (spacer == null) {
+						spacer = new Label(cTitleCategoriesAndTags, SWT.NONE);
+						RowData rd = new RowData();
+						rd.width = 8;
+						spacer.setLayoutData(rd);
+						spacer.moveAbove(null);
+						if ( titleLab != null ){
+							titleLab.moveAbove(spacer);
+						}
+					}
+					button.moveAbove(spacer);
+				}
+				
+				button.addKeyListener(this);
+				if ( fontButton == null) {
+					fontButton = FontUtils.cache( FontUtils.getFontWithStyle(button.getFont(), SWT.NONE, 0.8f));
+				}
+				button.setFont(fontButton);
+	
+				if (isCurrent(tag)) {
+					painter.setSelected(true);
+					updateTagAlphas();
+				}
+	
+				Menu menu = new Menu( button );
+	
+				button.setMenu( menu );
+	
+				if (isCat) {
+					CategoryUIUtils.setupCategoryMenu(
+						menu, 
+						(Category) tag,
+						(dm)->{
+							return( isOurDownloadManager((DownloadManager)dm ));
+						});
+				} else {
+					TagUIUtils.createSideBarMenuItemsDelayed(
+						menu, 
+						tag,
+						(dm)->{
+							return( isOurDownloadManager((DownloadManager)dm ));
+						});
+				}
 			}
+		}finally{
 			
-			button.addKeyListener(this);
-			if ( fontButton == null) {
-				fontButton = FontUtils.cache( FontUtils.getFontWithStyle(button.getFont(), SWT.NONE, 0.8f));
-			}
-			button.setFont(fontButton);
-
-			if (isCurrent(tag)) {
-				painter.setSelected(true);
-				updateTagAlphas();
-			}
-
-			Menu menu = new Menu( button );
-
-			button.setMenu( menu );
-
-			if (isCat) {
-				CategoryUIUtils.setupCategoryMenu(
-					menu, 
-					(Category) tag,
-					(dm)->{
-						return( isOurDownloadManager((DownloadManager)dm ));
-					});
-			} else {
-				TagUIUtils.createSideBarMenuItemsDelayed(
-					menu, 
-					tag,
-					(dm)->{
-						return( isOurDownloadManager((DownloadManager)dm ));
-					});
-			}
+			cTitleCategoriesAndTags.setLayoutDeferred( false );
 		}
-
+		
 		cTableParentPanel.layout(true, true);
 	}
 
